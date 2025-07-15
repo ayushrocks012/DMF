@@ -1,0 +1,269 @@
+'====================================================================================
+'== CODE FOR THE USERFORM: frmMultiSubtotal
+'== Right-click the form in the VBE Project Explorer and select "View Code".
+'== Paste this entire section into that code window.
+'====================================================================================
+
+Option Explicit
+
+' --- Form Control Event Handlers ---
+
+Private Sub btnAddHierarchy_Click()
+    Call MoveListItem(lstAvailableCols, lstHierarchyOrder)
+End Sub
+
+Private Sub btnRemoveHierarchy_Click()
+    Call MoveListItem(lstHierarchyOrder, lstAvailableCols)
+End Sub
+
+Private Sub btnAddSubtotal_Click()
+    Call MoveListItem(lstAvailableCols, lstSubtotalCols)
+End Sub
+
+Private Sub btnRemoveSubtotal_Click()
+    Call MoveListItem(lstSubtotalCols, lstAvailableCols)
+End Sub
+
+Private Sub btnCancel_Click()
+    ' Unload the form without doing anything
+    Unload Me
+End Sub
+
+Private Sub btnDown_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, 1) ' 1 for Down
+End Sub
+
+Private Sub btnUp_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, -1) ' -1 for Up
+End Sub
+
+Private Sub btnOK_Click()
+    ' --- VALIDATION ---
+    If lstHierarchyOrder.ListCount = 0 Then
+        MsgBox "Please select at least one column for the hierarchy.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    
+    If lstSubtotalCols.ListCount = 0 Then
+        MsgBox "Please select at least one column to subtotal.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    
+    ' --- POPULATE GLOBAL COLLECTIONS ---
+    Set modMultiSubtotal.hierarchyColNames = New Collection
+    Dim i As Long
+    For i = 0 To lstHierarchyOrder.ListCount - 1
+        modMultiSubtotal.hierarchyColNames.Add lstHierarchyOrder.List(i)
+    Next i
+    
+    Set modMultiSubtotal.subtotalColNames = New Collection
+    For i = 0 To lstSubtotalCols.ListCount - 1
+        modMultiSubtotal.subtotalColNames.Add lstSubtotalCols.List(i)
+    Next i
+    
+    modMultiSubtotal.summaryBelow = Me.optSummaryBelow.Value
+    
+    ' --- HIDE FORM AND RUN MAIN SUB ---
+    Me.Hide
+    Call modMultiSubtotal.RunMultiLevelSubtotal
+    
+    ' --- CLEANUP ---
+    Unload Me
+End Sub
+
+Private Sub UserForm_Initialize()
+    ' --- Default settings ---
+    Me.optSummaryBelow.Value = True
+    
+    ' --- Populate the available columns listbox from the specified header row ---
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    If ws Is Nothing Then Exit Sub
+    
+    Dim lastCol As Long
+    ' Use the globally set headerRow from the module
+    lastCol = ws.Cells(modMultiSubtotal.headerRow, ws.Columns.Count).End(xlToLeft).Column
+    
+    Dim i As Long
+    For i = 1 To lastCol
+        If Trim(ws.Cells(modMultiSubtotal.headerRow, i).Value) <> "" Then
+            Me.lstAvailableCols.AddItem ws.Cells(modMultiSubtotal.headerRow, i).Value
+        End If
+    Next i
+End Sub
+
+
+' --- Helper Subroutines for ListBox manipulation ---
+
+Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.ListBox)
+    Dim i As Long
+    ' Loop backwards because we are removing items
+    For i = sourceList.ListCount - 1 To 0 Step -1
+        If sourceList.Selected(i) Then
+            destList.AddItem sourceList.List(i)
+            sourceList.RemoveItem i
+        End If
+    Next i
+End Sub
+
+Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
+    Dim selectedIdx As Long
+    selectedIdx = lb.ListIndex
+    
+    ' Check if an item is selected and if it can be moved
+    If selectedIdx = -1 Then Exit Sub
+    If direction = -1 And selectedIdx = 0 Then Exit Sub ' Already at top
+    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub ' Already at bottom
+    
+    Dim temp As String
+    temp = lb.List(selectedIdx)
+    
+    ' Swap with the item in the target direction
+    lb.List(selectedIdx) = lb.List(selectedIdx + direction)
+    lb.List(selectedIdx + direction) = temp
+    
+    ' Keep the moved item selected
+    lb.Selected(selectedIdx + direction) = True
+End Sub
+
+
+'====================================================================================
+'== CODE FOR THE MODULE: Module1
+'== In the VBE, go to Insert -> Module.
+'== Paste this entire section into that module's code window.
+'====================================================================================
+
+Option Explicit
+
+' --- Global variables to hold settings from the form ---
+Public hierarchyColNames As Collection
+Public subtotalColNames As Collection
+Public summaryBelow As Boolean
+Public headerRow As Long ' NEW: Stores the user-defined header row
+
+' --- Main Subroutine to be called by the user ---
+Sub ShowSubtotalForm()
+    ' This sub initializes the process, asks for the header row, and shows the form
+    
+    ' Clear old collections in case of error on previous run
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+    
+    Dim headerRowInput As String
+    
+    ' Loop until a valid number is entered
+    Do
+        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "1")
+        
+        ' Exit if user cancels
+        If headerRowInput = "" Then Exit Sub
+        
+        ' Check if it's a valid positive number
+        If IsNumeric(headerRowInput) And CLng(headerRowInput) > 0 Then
+            headerRow = CLng(headerRowInput)
+            Exit Do
+        Else
+            MsgBox "Invalid input. Please enter a positive number for the row.", vbExclamation
+        End If
+    Loop
+    
+    frmMultiSubtotal.Show
+End Sub
+
+
+' --- Core logic, called from the form ---
+Sub RunMultiLevelSubtotal()
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    On Error GoTo ErrorHandler
+    
+    ' --- 0. PREPARATION ---
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Clear any previous subtotals and outlines
+    ws.Cells.RemoveSubtotal
+    ws.Cells.ClearOutline
+    
+    ' --- 1. GET COLUMN INDICES ---
+    Dim hierarchyColIndices() As Long
+    ReDim hierarchyColIndices(1 To hierarchyColNames.Count)
+    
+    Dim subtotalColIndices() As Long
+    ReDim subtotalColIndices(1 To subtotalColNames.Count)
+    
+    Dim i As Long
+    For i = 1 To hierarchyColNames.Count
+        ' Find column index based on the dynamic header row
+        hierarchyColIndices(i) = Application.WorksheetFunction.Match(hierarchyColNames(i), ws.Rows(headerRow), 0)
+    Next i
+    
+    For i = 1 To subtotalColNames.Count
+        ' Find column index based on the dynamic header row
+        subtotalColIndices(i) = Application.WorksheetFunction.Match(subtotalColNames(i), ws.Rows(headerRow), 0)
+    Next i
+    
+    ' --- 2. SORT DATA ---
+    Dim dataRange As Range
+    ' Define the data range starting from the dynamic header row
+    Set dataRange = ws.Cells(headerRow, 1).CurrentRegion
+    
+    With ws.Sort
+        .SortFields.Clear
+        ' Add each hierarchy column to the sort fields in the specified order
+        For i = 1 To UBound(hierarchyColIndices)
+            .SortFields.Add Key:=ws.Columns(hierarchyColIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        Next i
+        .SetRange dataRange
+        .Header = xlYes ' The range starts with the header, so this is correct
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+    
+    ' --- 3. APPLY SUBTOTALS ---
+    ' This is the core trick: Apply subtotals for each level, from the
+    ' most detailed level up to the highest level.
+    ' The first call uses Replace:=True to set up the structure.
+    ' Subsequent calls use Replace:=False to add nested levels.
+    
+    ' First, apply the subtotal for the most detailed (last) hierarchy level
+    dataRange.Subtotal GroupBy:=hierarchyColIndices(UBound(hierarchyColIndices)), _
+                       Function:=xlSum, _
+                       TotalList:=subtotalColIndices, _
+                       Replace:=True, _
+                       PageBreaks:=False, _
+                       SummaryBelowData:=summaryBelow
+                       
+    ' Now, loop through the remaining hierarchy levels from second-to-last up to the first
+    If UBound(hierarchyColIndices) > 1 Then
+        For i = UBound(hierarchyColIndices) - 1 To 1 Step -1
+            dataRange.Subtotal GroupBy:=hierarchyColIndices(i), _
+                               Function:=xlSum, _
+                               TotalList:=subtotalColIndices, _
+                               Replace:=False, _
+                               PageBreaks:=False, _
+                               SummaryBelowData:=summaryBelow
+        Next i
+    End If
+    
+    ' AutoFit columns for better readability
+    ws.Columns.AutoFit
+
+Cleanup:
+    ' --- 4. CLEANUP ---
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Set ws = Nothing
+    Set dataRange = Nothing
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    Resume Cleanup
+End Sub
