@@ -1,0 +1,530 @@
+'====================================================================================
+'== CODE FOR THE USERFORM: frmMultiSubtotal
+'== Right-click the form in the VBE Project Explorer and select "View Code".
+'== Paste this entire section into that code window.
+'====================================================================================
+
+Option Explicit
+
+' --- Form Control Event Handlers ---
+
+Private Sub btnAddHierarchy_Click()
+    Call MoveListItem(lstAvailableCols, lstHierarchyOrder, True) ' Prevent duplicates
+End Sub
+
+Private Sub btnRemoveHierarchy_Click()
+    Call MoveListItem(lstHierarchyOrder, lstAvailableCols, False) ' Allow move back
+End Sub
+
+Private Sub btnAddSubtotal_Click()
+    Call MoveListItem(lstAvailableCols, lstSubtotalCols, True) ' Prevent duplicates
+End Sub
+
+Private Sub btnRemoveSubtotal_Click()
+    Call MoveListItem(lstSubtotalCols, lstAvailableCols, False) ' Allow move back
+End Sub
+
+Private Sub btnCancel_Click()
+    Unload Me
+End Sub
+
+Private Sub btnDown_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, 1) ' 1 for Down
+End Sub
+
+Private Sub btnUp_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, -1) ' -1 for Up
+End Sub
+
+Private Sub btnOK_Click()
+    ' --- VALIDATION ---
+    If Me.cboWorksheets.ListIndex = -1 Then
+        MsgBox "Please select a worksheet to process.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    If lstHierarchyOrder.ListCount = 0 Then
+        MsgBox "Please select at least one column for the hierarchy.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    If lstSubtotalCols.ListCount = 0 Then
+        MsgBox "Please select at least one column to subtotal.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
+    
+    ' --- POPULATE GLOBAL COLLECTIONS ---
+    targetWorksheetName = Me.cboWorksheets.Value
+    
+    Set hierarchyColNames = New Collection
+    Dim i As Long
+    For i = 0 To lstHierarchyOrder.ListCount - 1
+        hierarchyColNames.Add lstHierarchyOrder.List(i)
+    Next i
+    
+    Set subtotalColNames = New Collection
+    For i = 0 To lstSubtotalCols.ListCount - 1
+        subtotalColNames.Add lstSubtotalCols.List(i)
+    Next i
+    
+    summaryBelow = Me.optSummaryBelow.Value
+    
+    Me.Hide
+    ' --- CALL THE NEW HIGH-SPEED ENGINE ---
+    Call RunHighSpeedSubtotal
+    Unload Me
+End Sub
+
+Private Sub UserForm_Initialize()
+    ' --- Set defaults and clear properties ---
+    Me.optSummaryBelow.Value = True
+    Me.lstAvailableCols.RowSource = ""
+    Me.lstHierarchyOrder.RowSource = ""
+    Me.lstSubtotalCols.RowSource = ""
+
+    ' --- Populate worksheet dropdown ---
+    Dim ws As Worksheet
+    Me.cboWorksheets.Clear
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.Visible = xlSheetVisible Then
+            Me.cboWorksheets.AddItem ws.Name
+        End If
+    Next ws
+    
+    ' --- Set dropdown to active sheet and trigger column population ---
+    On Error Resume Next
+    Me.cboWorksheets.Value = ActiveSheet.Name
+    If Err.Number <> 0 Then
+        If Me.cboWorksheets.ListCount > 0 Then
+            Me.cboWorksheets.ListIndex = 0
+        End If
+    End If
+    On Error GoTo 0
+End Sub
+
+Private Sub cboWorksheets_Change()
+    ' When the worksheet selection changes, re-populate the available columns.
+    Call PopulateAvailableColumns
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    ' Handle the user clicking the [X] button on the form.
+    If CloseMode = vbFormControlMenu Then
+        Call CancelAndCleanup
+    End If
+End Sub
+
+' --- Helper Subroutines ---
+
+Private Sub PopulateAvailableColumns()
+    ' Populates the "Available" listbox based on the selected worksheet.
+    Me.lstAvailableCols.Clear
+    Me.lstHierarchyOrder.Clear
+    Me.lstSubtotalCols.Clear
+
+    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
+    
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
+    
+    Dim lastCol As Long
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    
+    If lastCol = 0 Then Exit Sub
+    
+    Dim i As Long
+    For i = 1 To lastCol
+        Dim headerText As String
+        headerText = Trim(ws.Cells(headerRow, i).Text)
+        If headerText <> "" Then
+            Me.lstAvailableCols.AddItem headerText
+        End If
+    Next i
+End Sub
+
+Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
+    Dim i As Long, j As Long
+    Dim itemExists As Boolean
+    
+    For i = sourceList.ListCount - 1 To 0 Step -1
+        If sourceList.Selected(i) Then
+            itemExists = False
+            If preventDuplicates Then
+                For j = 0 To destList.ListCount - 1
+                    If destList.List(j) = sourceList.List(i) Then
+                        itemExists = True
+                        Exit For
+                    End If
+                Next j
+            End If
+            
+            If Not itemExists Then
+                destList.AddItem sourceList.List(i)
+                sourceList.RemoveItem i
+            Else
+                MsgBox "'" & sourceList.List(i) & "' is already in the destination list.", vbInformation
+            End If
+        End If
+    Next i
+End Sub
+
+Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
+    Dim selectedIdx As Long
+    selectedIdx = lb.ListIndex
+    
+    If selectedIdx = -1 Then Exit Sub
+    If direction = -1 And selectedIdx = 0 Then Exit Sub
+    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub
+    
+    Dim temp As String
+    temp = lb.List(selectedIdx)
+    
+    lb.List(selectedIdx) = lb.List(selectedIdx + direction)
+    lb.List(selectedIdx + direction) = temp
+    lb.Selected(selectedIdx + direction) = True
+End Sub
+
+'====================================================================================
+'== CODE FOR THE MODULE: Module1 (or any other name)
+'== In the VBE, go to Insert -> Module.
+'== Paste this entire section into that module's code window.
+'== IMPORTANT: Go to Tools -> References... and check "Microsoft Scripting Runtime"
+'====================================================================================
+
+Option Explicit
+
+' --- Global variables to hold settings from the form ---
+Public targetWorksheetName As String
+Public hierarchyColNames As Collection
+Public subtotalColNames As Collection
+Public summaryBelow As Boolean
+Public headerRow As Long
+
+' --- Main entry points ---
+Sub ShowSubtotalForm()
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+    
+    Dim headerRowInput As String
+    Do
+        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "2")
+        If headerRowInput = "" Then Exit Sub
+        If IsNumeric(headerRowInput) And CLng(headerRowInput) > 0 Then
+            headerRow = CLng(headerRowInput)
+            Exit Do
+        Else
+            MsgBox "Invalid input. Please enter a positive number for the row.", vbExclamation
+        End If
+    Loop
+    
+    frmMultiSubtotal.Show
+End Sub
+
+Sub CancelAndCleanup()
+    Call RestoreExcelSettings(True)
+End Sub
+
+' --- HIGH-SPEED ENGINE CONTROLLER ---
+Sub RunHighSpeedSubtotal()
+    On Error GoTo ErrorHandler
+    
+    ' --- 0. PREPARATION ---
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.StatusBar = "Preparing to process..."
+    
+    Dim wsSource As Worksheet, wsOutput As Worksheet
+    Dim hierarchyIndices() As Long, subtotalIndices() As Long
+    Dim valueArray As Variant, formulaArray As Variant
+    Dim outputArray As Variant, groupRows As Collection
+    
+    Set wsSource = ThisWorkbook.Worksheets(targetWorksheetName)
+    
+    ' --- 1. VALIDATE & READ DATA INTO MEMORY ---
+    If Not PrepareAndReadData(wsSource, hierarchyIndices, subtotalIndices, valueArray, formulaArray) Then GoTo Cleanup
+    
+    ' --- 2. SORT DATA IN MEMORY ---
+    Application.StatusBar = "Sorting " & UBound(valueArray, 1) - 1 & " rows in memory..."
+    QuickSort2DArray valueArray, LBound(valueArray, 1) + 1, UBound(valueArray, 1), hierarchyIndices, formulaArray
+    
+    ' --- 3. BUILD THE OUTPUT ARRAY IN MEMORY ---
+    Application.StatusBar = "Aggregating totals and building report..."
+    BuildOutputArray valueArray, formulaArray, hierarchyIndices, subtotalIndices, outputArray, groupRows
+    
+    ' --- 4. CREATE OUTPUT SHEET AND WRITE RESULTS ---
+    Application.StatusBar = "Creating new report worksheet..."
+    Set wsOutput = CreateOutputSheet()
+    
+    Application.StatusBar = "Writing " & UBound(outputArray, 1) & " rows to new sheet..."
+    wsOutput.Range("A1").Resize(UBound(outputArray, 1), UBound(outputArray, 2)).Value = outputArray
+    
+    ' --- 5. APPLY FORMATTING AND GROUPING ---
+    Application.StatusBar = "Applying formatting and outline..."
+    ApplyFormattingAndGrouping wsOutput, groupRows, UBound(hierarchyIndices)
+    
+    wsOutput.Columns.AutoFit
+    Application.StatusBar = "Process complete!"
+
+Cleanup:
+    Call RestoreExcelSettings(False)
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    Resume Cleanup
+End Sub
+
+' --- High-Speed Engine Sub-Procedures ---
+
+Private Function PrepareAndReadData(ws As Worksheet, ByRef hierarchyIndices() As Long, ByRef subtotalIndices() As Long, ByRef valueArray As Variant, ByRef formulaArray As Variant) As Boolean
+    ' Validates selections, gets column indices, and reads data into memory arrays.
+    Application.StatusBar = "Validating selections and reading data..."
+    
+    ' Get column indices
+    Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
+    ReDim hierarchyIndices(1 To hierarchyColNames.Count)
+    ReDim subtotalIndices(1 To subtotalColNames.Count)
+    
+    For i = 1 To hierarchyColNames.Count
+        colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
+        If colIdx = 0 Then MsgBox "Could not find HIERARCHY column '" & hierarchyColNames(i) & "'", vbCritical: Exit Function
+        hierarchyIndices(i) = colIdx
+    Next i
+    
+    For i = 1 To subtotalColNames.Count
+        colIdx = GetColumnIndexByText(subtotalColNames(i), ws, headerRow)
+        If colIdx = 0 Then MsgBox "Could not find SUBTOTAL column '" & subtotalColNames(i) & "'", vbCritical: Exit Function
+        subtotalIndices(i) = colIdx
+    Next i
+    
+    ' Define range and read into arrays
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
+    If lastRow <= headerRow Then MsgBox "No data found below header row.", vbInformation: Exit Function
+    
+    Dim dataRange As Range
+    Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
+    
+    valueArray = dataRange.Value2
+    formulaArray = dataRange.FormulaR1C1
+    
+    PrepareAndReadData = True
+End Function
+
+Private Sub BuildOutputArray(valueArray As Variant, formulaArray As Variant, hierarchyIndices() As Long, subtotalIndices() As Long, ByRef outputArray As Variant, ByRef groupRows As Collection)
+    ' Loops through sorted data, aggregates totals, and builds the final output array.
+    Dim totals() As Double, groupTrackers() As Variant
+    Dim row As Long, i As Long, level As Long, outputRow As Long
+    Dim numRows As Long, numCols As Long, numLevels As Long
+    Dim totalRowsToAdd As Long
+    
+    numRows = UBound(valueArray, 1)
+    numCols = UBound(valueArray, 2)
+    numLevels = UBound(hierarchyIndices)
+    Set groupRows = New Collection
+    
+    ' First pass: count how many total rows we will need
+    ReDim groupTrackers(1 To numLevels)
+    For level = 1 To numLevels: groupTrackers(level) = valueArray(2, hierarchyIndices(level)): Next
+    
+    For row = 3 To numRows
+        For level = numLevels To 1 Step -1
+            If valueArray(row, hierarchyIndices(level)) <> groupTrackers(level) Then
+                totalRowsToAdd = totalRowsToAdd + 1
+                For i = level To numLevels: groupTrackers(i) = valueArray(row, hierarchyIndices(i)): Next
+                Exit For
+            End If
+        Next level
+    Next row
+    totalRowsToAdd = totalRowsToAdd + 1 ' For the final grand total
+    
+    ' Size the output array
+    ReDim outputArray(1 To numRows + totalRowsToAdd, 1 To numCols)
+    outputRow = 1
+    
+    ' Copy headers
+    For i = 1 To numCols: outputArray(1, i) = valueArray(1, i): Next
+    outputRow = 2
+    
+    ' Main processing loop
+    Dim grandTotals() As Double
+    ReDim grandTotals(1 To numCols)
+    Dim dictLevels As New Scripting.Dictionary
+    For level = 1 To numLevels: Set dictLevels(level) = New Scripting.Dictionary: Next
+    
+    For row = 2 To numRows
+        ' Add current data row to output
+        For i = 1 To numCols: outputArray(outputRow, i) = formulaArray(row, i): Next
+        
+        ' Update totals
+        For level = 1 To numLevels
+            Dim key As String
+            key = ""
+            For i = 1 To level: key = key & valueArray(row, hierarchyIndices(i)) & Chr(0): Next
+            
+            If Not dictLevels(level).Exists(key) Then
+                ReDim totals(1 To numCols)
+                dictLevels(level)(key) = totals
+            End If
+            
+            totals = dictLevels(level)(key)
+            For i = 1 To UBound(subtotalIndices)
+                totals(subtotalIndices(i)) = totals(subtotalIndices(i)) + Val(valueArray(row, subtotalIndices(i)))
+            Next i
+            dictLevels(level)(key) = totals
+        Next level
+        
+        ' Update grand totals
+        For i = 1 To UBound(subtotalIndices)
+            grandTotals(subtotalIndices(i)) = grandTotals(subtotalIndices(i)) + Val(valueArray(row, subtotalIndices(i)))
+        Next i
+        
+        ' Check for group breaks and write total rows
+        Dim nextRow As Long
+        If row = numRows Then nextRow = row Else nextRow = row + 1
+        
+        For level = numLevels To 1 Step -1
+            Dim currentKey As String, nextKey As String
+            For i = 1 To level
+                currentKey = currentKey & valueArray(row, hierarchyIndices(i)) & Chr(0)
+                nextKey = nextKey & valueArray(nextRow, hierarchyIndices(i)) & Chr(0)
+            Next i
+            
+            If currentKey <> nextKey Or row = numRows Then
+                Dim totalRowData As Variant
+                totalRowData = dictLevels(level)(currentKey)
+                
+                groupRows.Add outputRow + 1 ' Store row number for grouping later
+                outputRow = outputRow + 1
+                
+                outputArray(outputRow, hierarchyIndices(level)) = valueArray(row, hierarchyIndices(level)) & " Total"
+                For i = 1 To UBound(subtotalIndices)
+                    outputArray(outputRow, subtotalIndices(i)) = totalRowData(subtotalIndices(i))
+                Next i
+                dictLevels(level).Remove currentKey
+            End If
+        Next level
+        outputRow = outputRow + 1
+    Next row
+    
+    ' Add Grand Total Row
+    groupRows.Add outputRow
+    outputArray(outputRow, hierarchyIndices(1)) = "Grand Total"
+    For i = 1 To UBound(subtotalIndices)
+        outputArray(outputRow, subtotalIndices(i)) = grandTotals(subtotalIndices(i))
+    Next i
+End Sub
+
+Private Function CreateOutputSheet() As Worksheet
+    ' Creates a new, clean worksheet for the report.
+    Dim tempName As String, i As Long
+    tempName = "Subtotal Report"
+    
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    ThisWorkbook.Worksheets(tempName).Delete
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+    
+    Set CreateOutputSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(targetWorksheetName))
+    CreateOutputSheet.Name = tempName
+End Function
+
+Private Sub ApplyFormattingAndGrouping(ws As Worksheet, groupRows As Collection, numLevels As Long)
+    ' Applies bolding and outline grouping to the final report.
+    Dim rowItem As Variant, i As Long
+    For Each rowItem In groupRows
+        With ws.Rows(rowItem)
+            .Font.Bold = True
+        End With
+    Next rowItem
+    
+    ' Apply outline levels
+    ws.Outline.ShowLevels rowLevels:=numLevels + 1
+End Sub
+
+Private Sub RestoreExcelSettings(ByVal cancelled As Boolean)
+    ' Restores Excel's settings.
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    If cancelled Then
+        Application.StatusBar = "Operation cancelled."
+    Else
+        Application.StatusBar = False
+    End If
+    
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+End Sub
+
+Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
+    ' Finds a column index by its displayed text.
+    Dim lastCol As Long
+    lastCol = ws.Cells(headerRowNum, ws.Columns.Count).End(xlToLeft).Column
+    Dim i As Long
+    For i = 1 To lastCol
+        If Trim(ws.Cells(headerRowNum, i).Text) = colName Then
+            GetColumnIndexByText = i
+            Exit Function
+        End If
+    Next i
+End Function
+
+' --- In-Memory QuickSort Algorithm for 2D Arrays ---
+Public Sub QuickSort2DArray(ByRef dataArray As Variant, ByVal firstRow As Long, ByVal lastRow As Long, sortColIndices() As Long, ByRef formulaArray As Variant)
+    ' Sorts a 2D array in-place based on multiple column criteria.
+    Dim pivotRow As Long, i As Long, j As Long
+    
+    If firstRow < lastRow Then
+        pivotRow = firstRow
+        i = firstRow
+        j = lastRow
+        
+        Do While i < j
+            Do While CompareRows(dataArray, i, pivotRow, sortColIndices) <= 0 And i < lastRow
+                i = i + 1
+            Loop
+            Do While CompareRows(dataArray, j, pivotRow, sortColIndices) > 0
+                j = j - 1
+            Loop
+            If i < j Then
+                SwapRows dataArray, i, j
+                SwapRows formulaArray, i, j ' Swap corresponding formula rows
+            End If
+        Loop
+        
+        SwapRows dataArray, pivotRow, j
+        SwapRows formulaArray, pivotRow, j ' Swap corresponding formula rows
+        
+        QuickSort2DArray dataArray, firstRow, j - 1, sortColIndices, formulaArray
+        QuickSort2DArray dataArray, j + 1, lastRow, sortColIndices, formulaArray
+    End If
+End Sub
+
+Private Function CompareRows(dataArray As Variant, row1 As Long, row2 As Long, sortColIndices() As Long) As Integer
+    ' Compares two rows based on the hierarchy columns. Returns -1, 0, or 1.
+    Dim i As Long
+    For i = LBound(sortColIndices) To UBound(sortColIndices)
+        Dim col As Long
+        col = sortColIndices(i)
+        If dataArray(row1, col) < dataArray(row2, col) Then
+            CompareRows = -1
+            Exit Function
+        ElseIf dataArray(row1, col) > dataArray(row2, col) Then
+            CompareRows = 1
+            Exit Function
+        End If
+    Next i
+    CompareRows = 0
+End Function
+
+Private Sub SwapRows(ByRef arr As Variant, row1 As Long, row2 As Long)
+    ' Swaps two full rows in a 2D array.
+    Dim i As Long
+    Dim temp As Variant
+    For i = LBound(arr, 2) To UBound(arr, 2)
+        temp = arr(row1, i)
+        arr(row1, i) = arr(row2, i)
+        arr(row2, i) = temp
+    Next i
+End Sub
