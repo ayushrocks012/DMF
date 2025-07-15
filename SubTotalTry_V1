@@ -226,7 +226,7 @@ End Sub
 
 '====================================================================================
 '== CODE FOR THE MODULE: Module1 (or any other name)
-'== This code has been updated to be more robust.
+'== This code has been updated to preserve rows above the header.
 '== IMPORTANT: Go to Tools -> References... and check "Microsoft Scripting Runtime"
 '====================================================================================
 
@@ -295,12 +295,19 @@ Sub RunHighSpeedSubtotal()
     Application.StatusBar = "Creating new report worksheet..."
     Set wsOutput = CreateOutputSheet()
     
+    ' --- FIX: Preserve rows above the specified header row ---
+    If headerRow > 1 Then
+        wsSource.Rows("1:" & headerRow - 1).Copy wsOutput.Rows("1:" & headerRow - 1)
+    End If
+    
     Application.StatusBar = "Writing " & UBound(outputArray, 1) & " rows to new sheet..."
-    wsOutput.Range("A1").Resize(UBound(outputArray, 1), UBound(outputArray, 2)).Value = outputArray
+    ' --- FIX: Paste the main report starting at the correct header row ---
+    wsOutput.Range("A" & headerRow).Resize(UBound(outputArray, 1), UBound(outputArray, 2)).Value = outputArray
     
     ' --- 5. APPLY FORMATTING AND GROUPING ---
     Application.StatusBar = "Applying formatting and outline..."
-    ApplyFormattingAndGrouping wsOutput, groupRows, UBound(hierarchyIndices)
+    ' --- FIX: Pass the headerRow to correctly offset the grouping ---
+    ApplyFormattingAndGrouping wsOutput, groupRows, UBound(hierarchyIndices), headerRow
     
     wsOutput.Columns.AutoFit
     Application.StatusBar = "Process complete!"
@@ -344,7 +351,7 @@ Private Function PrepareAndReadData(ws As Worksheet, ByRef hierarchyIndices() As
     Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
     
     valueArray = dataRange.Value2
-    formulaArray = dataRange.FormulaR1C1
+    formulaArray = dataRange.Formula
     
     PrepareAndReadData = True
 End Function
@@ -467,11 +474,12 @@ Private Function CreateOutputSheet() As Worksheet
     CreateOutputSheet.Name = tempName
 End Function
 
-Private Sub ApplyFormattingAndGrouping(ws As Worksheet, groupRows As Collection, numLevels As Long)
+Private Sub ApplyFormattingAndGrouping(ws As Worksheet, groupRows As Collection, numLevels As Long, ByVal startDataRow As Long)
     ' Applies bolding and outline grouping to the final report.
+    ' --- FIX: Offset the row number by the starting data row ---
     Dim rowItem As Variant
     For Each rowItem In groupRows
-        ws.Rows(rowItem).Font.Bold = True
+        ws.Rows(rowItem + startDataRow - 1).Font.Bold = True
     Next rowItem
     
     ws.Outline.ShowLevels rowLevels:=numLevels + 1
