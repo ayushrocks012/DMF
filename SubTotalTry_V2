@@ -288,13 +288,28 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' Applies the standard Excel subtotal command.
-    ' This is the correct order: from most general to most detailed.
-    dataRange.Subtotal GroupBy:=1, Totals:=Array(1), Function:=xlSum, Replace:=True ' Dummy to clear
-    dataRange.RemoveSubtotal
+    ' --- FIX: Apply subtotals in a loop, from highest level to lowest, for robustness ---
     
-    dataRange.Subtotal GroupBy:=hierarchyIndices, Function:=xlSum, TotalList:=subtotalIndices, _
-        Replace:=True, PageBreaks:=False, SummaryBelowData:=summaryBelow
+    ' Apply the highest level of the hierarchy first. This creates the main structure and the Grand Total.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
+                       Function:=xlSum, _
+                       TotalList:=subtotalIndices, _
+                       Replace:=True, _
+                       PageBreaks:=False, _
+                       SummaryBelowData:=summaryBelow
+                       
+    ' Now, loop through the remaining hierarchy levels to add the nested subtotals.
+    If UBound(hierarchyIndices) > 1 Then
+        Dim i As Long
+        For i = 2 To UBound(hierarchyIndices)
+            dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
+                               Function:=xlSum, _
+                               TotalList:=subtotalIndices, _
+                               Replace:=False, _
+                               PageBreaks:=False, _
+                               SummaryBelowData:=summaryBelow
+        Next i
+    End If
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
