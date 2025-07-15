@@ -1,0 +1,204 @@
+'====================================================================================
+'== CODE FOR A NEW MODULE
+'== This is the refactored version of the code you provided.
+'== It works directly on the worksheet and uses InputBox prompts.
+'== You can delete the UserForm, as it is not used by this code.
+'====================================================================================
+
+Option Explicit
+
+' --- Configuration Constants ---
+Public Const SUBTOTAL_LABEL_SUFFIX As String = " Total"
+Public Const GRAND_TOTAL_LABEL As String = "Grand Total"
+Public Const SUBTOTAL_SUM_FUNCTION As Long = 9 ' 9 = Sum
+
+' --- Main Subroutine to be called by the user ---
+Sub RunDirectSubtotal()
+    ' This is the main entry point for the user.
+    ' It guides the user through the process of selecting ranges and options.
+
+    ' --- 1. Get User Choices ---
+    Dim actionChoice As VbMsgBoxResult
+    actionChoice = MsgBox("Choose an action:" & vbCrLf & vbCrLf & _
+                          "YES = Add/Update Subtotals" & vbCrLf & _
+                          "NO = Remove All Subtotals & Grouping" & vbCrLf & _
+                          "CANCEL = Exit", _
+                          vbYesNoCancel + vbQuestion, "Subtotal Options")
+
+    If actionChoice = vbCancel Then
+        MsgBox "Operation cancelled by user.", vbInformation
+        Exit Sub
+    ElseIf actionChoice = vbNo Then
+        Call RemoveAllSubtotalsAndGrouping(ActiveSheet)
+        Exit Sub
+    End If
+
+    ' --- 2. Get User Input for Ranges and Options ---
+    Dim ws As Worksheet
+    Dim dataRange As Range, groupCols As Range, subtotalCols As Range
+    Dim subtotalAtBottom As Boolean, skipSort As Boolean
+
+    Set ws = ActiveSheet
+
+    If Not GetUserInput(ws, dataRange, groupCols, subtotalCols, subtotalAtBottom, skipSort) Then
+        MsgBox "Operation cancelled or invalid input provided.", vbInformation
+        Exit Sub
+    End If
+
+    ' --- 3. Run the Main Process ---
+    Call ProcessSubtotals(ws, dataRange, groupCols, subtotalCols, subtotalAtBottom, skipSort)
+
+End Sub
+
+
+' --- Main Processing Logic ---
+
+Private Sub ProcessSubtotals(ws As Worksheet, dataRange As Range, groupCols As Range, subtotalCols As Range, subtotalAtBottom As Boolean, skipSort As Boolean)
+    ' This subroutine orchestrates the entire subtotaling process.
+    
+    Dim levelCols() As Long, subtotalColNums() As Long
+    Dim levelCount As Long, i As Long
+    
+    On Error GoTo ErrorHandler
+
+    ' --- Preparation ---
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.StatusBar = "Preparing to process subtotals..."
+
+    ' Clear any previous outlines
+    On Error Resume Next
+    ws.Cells.ClearOutline
+    On Error GoTo ErrorHandler
+    
+    ws.Outline.SummaryRow = IIf(subtotalAtBottom, xlSummaryBelow, xlSummaryAbove)
+
+    ' --- Convert selected ranges to column numbers ---
+    levelCount = groupCols.Columns.Count
+    ReDim levelCols(1 To levelCount)
+    For i = 1 To levelCount
+        levelCols(i) = groupCols.Columns(i).Column
+    Next i
+
+    ReDim subtotalColNums(1 To subtotalCols.Columns.Count)
+    For i = 1 To subtotalCols.Columns.Count
+        subtotalColNums(i) = subtotalCols.Columns(i).Column
+    Next i
+
+    ' --- Sorting ---
+    If Not skipSort Then
+        Application.StatusBar = "Sorting data..."
+        With ws.Sort
+            .SortFields.Clear
+            For i = 1 To levelCount
+                .SortFields.Add Key:=ws.Columns(levelCols(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+            Next i
+            .SetRange dataRange
+            .Header = xlYes
+            .MatchCase = False
+            .Orientation = xlTopToBottom
+            .SortMethod = xlPinYin
+            .Apply
+        End With
+    End If
+
+    ' --- Insert Subtotals ---
+    ' Loop backwards from the most detailed level to the highest level.
+    Dim lastRow As Long
+    lastRow = dataRange.Row + dataRange.Rows.Count - 1
+    
+    For i = levelCount To 1 Step -1
+        Application.StatusBar = "Processing Level " & (levelCount - i + 1) & " of " & levelCount & "..."
+        dataRange.Subtotal GroupBy:=levelCols(i), _
+                           Function:=SUBTOTAL_SUM_FUNCTION, _
+                           TotalList:=subtotalColNums, _
+                           Replace:=(i = levelCount), _
+                           PageBreaks:=False, _
+                           SummaryBelowData:=subtotalAtBottom
+    Next i
+    
+    ' --- Insert Grand Total ---
+    ' Note: The native .Subtotal command automatically adds a Grand Total if Replace is True on the first call.
+    ' This section could be enhanced if a different grand total behavior is needed.
+    
+    Application.StatusBar = "Auto-fitting columns..."
+    On Error Resume Next
+    ws.UsedRange.Columns.AutoFit
+    On Error GoTo ErrorHandler
+
+Cleanup:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.StatusBar = False ' Reset status bar
+    MsgBox "Hierarchical subtotals process finished!", vbInformation
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description, vbCritical, "Subtotal Error"
+    Resume Cleanup
+End Sub
+
+
+' --- User Input Helper Function ---
+
+Private Function GetUserInput(ws As Worksheet, ByRef dataRange As Range, ByRef groupCols As Range, ByRef subtotalCols As Range, ByRef subtotalAtBottom As Boolean, ByRef skipSort As Boolean) As Boolean
+    ' Handles all the InputBox prompts and validates the user's selections.
+    ' Returns False if the user cancels at any point.
+    
+    On Error Resume Next ' Allows us to check if the user cancelled an InputBox
+    
+    Set dataRange = Application.InputBox("Select the full data range (including your header row):", "1. Select Data Range", Type:=8)
+    If dataRange Is Nothing Then Exit Function
+    If dataRange.Rows.Count <= 1 Then
+        MsgBox "Data range must include a header and at least one data row.", vbExclamation
+        Exit Function
+    End If
+
+    Set groupCols = Application.InputBox("Select the column(s) to group by (e.g., A:D):", "2. Select Grouping Columns", Type:=8)
+    If groupCols Is Nothing Then Exit Function
+    If Intersect(groupCols.EntireColumn, dataRange.EntireColumn) Is Nothing Then
+        MsgBox "Grouping columns must be within the data range.", vbExclamation
+        Exit Function
+    End If
+
+    Set subtotalCols = Application.InputBox("Select the column(s) to subtotal (e.g., F:AQ):", "3. Select Subtotal Columns", Type:=8)
+    If subtotalCols Is Nothing Then Exit Function
+    If Intersect(subtotalCols.EntireColumn, dataRange.EntireColumn) Is Nothing Then
+        MsgBox "Subtotal columns must be within the data range.", vbExclamation
+        Exit Function
+    End If
+    
+    On Error GoTo 0 ' Resume normal error handling
+
+    Dim positionChoice As VbMsgBoxResult
+    positionChoice = MsgBox("Place subtotals BELOW data?", vbYesNoCancel + vbQuestion, "4. Subtotal Position")
+    If positionChoice = vbCancel Then Exit Function
+    subtotalAtBottom = (positionChoice = vbYes)
+        
+    Dim skipSortChoice As VbMsgBoxResult
+    skipSortChoice = MsgBox("Is your data already sorted correctly?", vbYesNoCancel + vbQuestion, "5. Sorting Option")
+    If skipSortChoice = vbCancel Then Exit Function
+    skipSort = (skipSortChoice = vbYes)
+    
+    GetUserInput = True
+End Function
+
+
+' --- Removal Helper Subroutine ---
+
+Private Sub RemoveAllSubtotalsAndGrouping(ws As Worksheet)
+    ' Removes all subtotals and outline groupings from the specified worksheet.
+    
+    Dim userResponse As VbMsgBoxResult
+    
+    Application.ScreenUpdating = False
+    Application.StatusBar = "Removing groupings and subtotals..."
+
+    ' The native RemoveSubtotal command is the most reliable way to do this.
+    ' It handles both the formulas and the outline grouping.
+    ws.Cells.RemoveSubtotal
+    
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+    MsgBox "All subtotals and groupings have been removed.", vbInformation
+End Sub
