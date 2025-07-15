@@ -95,8 +95,11 @@ Private Sub UserForm_Initialize()
     Dim i As Long
     For i = 1 To lastCol
         ' Use the globally available headerRow variable directly
-        If Trim(ws.Cells(headerRow, i).Value) <> "" Then
-            Me.lstAvailableCols.AddItem ws.Cells(headerRow, i).Value
+        Dim headerValue As String
+        headerValue = Trim(ws.Cells(headerRow, i).Value) ' FIX: Trim spaces from header
+        
+        If headerValue <> "" Then
+            Me.lstAvailableCols.AddItem headerValue ' Add the clean value
         End If
     Next i
 End Sub
@@ -204,14 +207,25 @@ Sub RunMultiLevelSubtotal()
     ReDim subtotalColIndices(1 To subtotalColNames.Count)
     
     Dim i As Long
+    Dim matchResult As Variant
+    
+    ' --- FIX: Use robust Application.Match with specific error handling ---
     For i = 1 To hierarchyColNames.Count
-        ' Find column index based on the dynamic header row
-        hierarchyColIndices(i) = Application.WorksheetFunction.Match(hierarchyColNames(i), ws.Rows(headerRow), 0)
+        matchResult = Application.Match(hierarchyColNames(i), ws.Rows(headerRow), 0)
+        If IsError(matchResult) Then
+            MsgBox "Could not find the HIERARCHY column '" & hierarchyColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes or hidden spaces.", vbCritical, "Column Not Found"
+            GoTo Cleanup
+        End If
+        hierarchyColIndices(i) = CLng(matchResult)
     Next i
     
     For i = 1 To subtotalColNames.Count
-        ' Find column index based on the dynamic header row
-        subtotalColIndices(i) = Application.WorksheetFunction.Match(subtotalColNames(i), ws.Rows(headerRow), 0)
+        matchResult = Application.Match(subtotalColNames(i), ws.Rows(headerRow), 0)
+        If IsError(matchResult) Then
+            MsgBox "Could not find the SUBTOTAL column '" & subtotalColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes or hidden spaces.", vbCritical, "Column Not Found"
+            GoTo Cleanup
+        End If
+        subtotalColIndices(i) = CLng(matchResult)
     Next i
     
     ' --- 2. SORT DATA ---
@@ -273,6 +287,6 @@ Cleanup:
     Exit Sub
 
 ErrorHandler:
-    MsgBox "An error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
     Resume Cleanup
 End Sub
