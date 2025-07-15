@@ -1,6 +1,7 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This code does not need to be changed.
+'== Right-click the form in the VBE Project Explorer and select "View Code".
+'== Paste this entire section into that code window.
 '====================================================================================
 
 Option Explicit
@@ -8,23 +9,22 @@ Option Explicit
 ' --- Form Control Event Handlers ---
 
 Private Sub btnAddHierarchy_Click()
-    Call MoveListItem(lstAvailableCols, lstHierarchyOrder)
+    Call MoveListItem(lstAvailableCols, lstHierarchyOrder, True) ' Prevent duplicates
 End Sub
 
 Private Sub btnRemoveHierarchy_Click()
-    Call MoveListItem(lstHierarchyOrder, lstAvailableCols)
+    Call MoveListItem(lstHierarchyOrder, lstAvailableCols, False) ' Allow move back
 End Sub
 
 Private Sub btnAddSubtotal_Click()
-    Call MoveListItem(lstAvailableCols, lstSubtotalCols)
+    Call MoveListItem(lstAvailableCols, lstSubtotalCols, True) ' Prevent duplicates
 End Sub
 
 Private Sub btnRemoveSubtotal_Click()
-    Call MoveListItem(lstSubtotalCols, lstAvailableCols)
+    Call MoveListItem(lstSubtotalCols, lstAvailableCols, False) ' Allow move back
 End Sub
 
 Private Sub btnCancel_Click()
-    ' Unload the form without doing anything
     Unload Me
 End Sub
 
@@ -38,18 +38,22 @@ End Sub
 
 Private Sub btnOK_Click()
     ' --- VALIDATION ---
+    If Me.cboWorksheets.ListIndex = -1 Then
+        MsgBox "Please select a worksheet to process.", vbExclamation, "Input Required"
+        Exit Sub
+    End If
     If lstHierarchyOrder.ListCount = 0 Then
         MsgBox "Please select at least one column for the hierarchy.", vbExclamation, "Input Required"
         Exit Sub
     End If
-    
     If lstSubtotalCols.ListCount = 0 Then
         MsgBox "Please select at least one column to subtotal.", vbExclamation, "Input Required"
         Exit Sub
     End If
     
     ' --- POPULATE GLOBAL COLLECTIONS ---
-    ' Directly access the public variables from the module
+    targetWorksheetName = Me.cboWorksheets.Value
+    
     Set hierarchyColNames = New Collection
     Dim i As Long
     For i = 0 To lstHierarchyOrder.ListCount - 1
@@ -63,57 +67,106 @@ Private Sub btnOK_Click()
     
     summaryBelow = Me.optSummaryBelow.Value
     
-    ' --- HIDE FORM AND RUN MAIN SUB ---
     Me.Hide
-    ' Directly call the public sub from the module
     Call RunMultiLevelSubtotal
-    
-    ' --- CLEANUP ---
     Unload Me
 End Sub
 
 Private Sub UserForm_Initialize()
-    ' --- FIX: Ensure RowSource is clear to allow AddItem to work ---
+    ' --- Set defaults and clear properties ---
+    Me.optSummaryBelow.Value = True
     Me.lstAvailableCols.RowSource = ""
     Me.lstHierarchyOrder.RowSource = ""
     Me.lstSubtotalCols.RowSource = ""
 
-    ' --- Default settings ---
-    Me.optSummaryBelow.Value = True
-    
-    ' --- Populate the available columns listbox from the specified header row ---
+    ' --- Populate worksheet dropdown ---
     Dim ws As Worksheet
-    Set ws = ActiveSheet
+    Me.cboWorksheets.Clear
+    For Each ws In ThisWorkbook.Worksheets
+        Me.cboWorksheets.AddItem ws.Name
+    Next ws
     
-    If ws Is Nothing Then Exit Sub
+    ' --- Set dropdown to active sheet and trigger column population ---
+    On Error Resume Next
+    Me.cboWorksheets.Value = ActiveSheet.Name
+    If Err.Number <> 0 Then
+        If Me.cboWorksheets.ListCount > 0 Then
+            Me.cboWorksheets.ListIndex = 0
+        End If
+    End If
+    On Error GoTo 0
+End Sub
+
+Private Sub cboWorksheets_Change()
+    ' When the worksheet selection changes, re-populate the available columns.
+    Call PopulateAvailableColumns
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    ' Handle the user clicking the [X] button on the form.
+    If CloseMode = vbFormControlMenu Then
+        ' Ensure Excel settings are restored if the macro was running.
+        Call CancelAndCleanup
+    End If
+End Sub
+
+' --- Helper Subroutines ---
+
+Private Sub PopulateAvailableColumns()
+    ' Populates the "Available" listbox based on the selected worksheet.
+    Me.lstAvailableCols.Clear
+    Me.lstHierarchyOrder.Clear
+    Me.lstSubtotalCols.Clear
+
+    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
+    
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
     
     Dim lastCol As Long
-    ' Use the globally available headerRow variable directly
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     
+    ' --- PERFORMANCE OPTIMIZATION: Read headers into an array ---
+    If lastCol = 0 Then Exit Sub
+    
+    Dim headers As Variant
+    headers = ws.Range(ws.Cells(headerRow, 1), ws.Cells(headerRow, lastCol)).Value
+    
+    Dim headerText As String
     Dim i As Long
-    For i = 1 To lastCol
-        ' Use the globally available headerRow variable directly
-        Dim headerValue As String
-        ' FIX: Use .Text to get the displayed value (e.g., "Jan-23") not the underlying value (e.g., 01/01/2023)
-        headerValue = Trim(ws.Cells(headerRow, i).Text)
-        
-        If headerValue <> "" Then
-            Me.lstAvailableCols.AddItem headerValue ' Add the clean, displayed value
+    For i = 1 To UBound(headers, 2)
+        ' We still need to get the .Text property for formatted dates,
+        ' so we reference the cell, but using the array index.
+        headerText = Trim(ws.Cells(headerRow, i).Text)
+        If headerText <> "" Then
+            Me.lstAvailableCols.AddItem headerText
         End If
     Next i
 End Sub
 
-
-' --- Helper Subroutines for ListBox manipulation ---
-
-Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.ListBox)
-    Dim i As Long
-    ' Loop backwards because we are removing items
+Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
+    Dim i As Long, j As Long
+    Dim itemExists As Boolean
+    
     For i = sourceList.ListCount - 1 To 0 Step -1
         If sourceList.Selected(i) Then
-            destList.AddItem sourceList.List(i)
-            sourceList.RemoveItem i
+            itemExists = False
+            If preventDuplicates Then
+                ' --- UX IMPROVEMENT: Check if item already exists ---
+                For j = 0 To destList.ListCount - 1
+                    If destList.List(j) = sourceList.List(i) Then
+                        itemExists = True
+                        Exit For
+                    End If
+                Next j
+            End If
+            
+            If Not itemExists Then
+                destList.AddItem sourceList.List(i)
+                sourceList.RemoveItem i
+            Else
+                MsgBox "'" & sourceList.List(i) & "' is already in the destination list.", vbInformation
+            End If
         End If
     Next i
 End Sub
@@ -122,22 +175,17 @@ Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
     Dim selectedIdx As Long
     selectedIdx = lb.ListIndex
     
-    ' Check if an item is selected and if it can be moved
     If selectedIdx = -1 Then Exit Sub
-    If direction = -1 And selectedIdx = 0 Then Exit Sub ' Already at top
-    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub ' Already at bottom
+    If direction = -1 And selectedIdx = 0 Then Exit Sub
+    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub
     
     Dim temp As String
     temp = lb.List(selectedIdx)
     
-    ' Swap with the item in the target direction
     lb.List(selectedIdx) = lb.List(selectedIdx + direction)
     lb.List(selectedIdx + direction) = temp
-    
-    ' Keep the moved item selected
     lb.Selected(selectedIdx + direction) = True
 End Sub
-
 
 '====================================================================================
 '== CODE FOR THE MODULE: Module1 (or any other name)
@@ -148,30 +196,22 @@ End Sub
 Option Explicit
 
 ' --- Global variables to hold settings from the form ---
-' Public scope makes them available to the entire VBA project (including the form)
+Public targetWorksheetName As String
 Public hierarchyColNames As Collection
 Public subtotalColNames As Collection
 Public summaryBelow As Boolean
 Public headerRow As Long
 
-' --- Main Subroutine to be called by the user ---
+' --- Main entry points ---
 Sub ShowSubtotalForm()
     ' This sub initializes the process, asks for the header row, and shows the form
-    
-    ' Clear old collections in case of error on previous run
     Set hierarchyColNames = Nothing
     Set subtotalColNames = Nothing
     
     Dim headerRowInput As String
-    
-    ' Loop until a valid number is entered
     Do
-        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "1")
-        
-        ' Exit if user cancels
+        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "2")
         If headerRowInput = "" Then Exit Sub
-        
-        ' Check if it's a valid positive number
         If IsNumeric(headerRowInput) And CLng(headerRowInput) > 0 Then
             headerRow = CLng(headerRowInput)
             Exit Do
@@ -183,97 +223,106 @@ Sub ShowSubtotalForm()
     frmMultiSubtotal.Show
 End Sub
 
-' --- Helper function to find a column by its displayed text ---
-Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
-    ' Helper function to find a column index by its displayed text, not its underlying value.
-    ' This correctly handles formatted dates, numbers, etc.
-    Dim lastCol As Long
-    lastCol = ws.Cells(headerRowNum, ws.Columns.Count).End(xlToLeft).Column
-    
-    Dim i As Long
-    For i = 1 To lastCol
-        ' Compare the clean, displayed text of the cell with the desired column name
-        If Trim(ws.Cells(headerRowNum, i).Text) = colName Then
-            GetColumnIndexByText = i
-            Exit Function
-        End If
-    Next i
-    
-    ' Return 0 if not found, which we can check for
-    GetColumnIndexByText = 0
-End Function
+Sub CancelAndCleanup()
+    ' Called if the form is closed with [X] to ensure settings are restored.
+    Call RestoreExcelSettings
+End Sub
 
-
-' --- Core logic, called from the form ---
+' --- Core Logic Controller ---
 Sub RunMultiLevelSubtotal()
-    Dim ws As Worksheet
-    Set ws = ActiveSheet
-    
     On Error GoTo ErrorHandler
     
     ' --- 0. PREPARATION ---
-    ' SPEED BOOST: Disable events, screen updating, and calculations for maximum speed.
     Application.EnableEvents = False
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.StatusBar = "Preparing to process subtotals..."
     
-    ' Clear any previous subtotals and outlines
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets(targetWorksheetName)
+    ws.Activate ' Ensure the target sheet is active for the commands
+    
     ws.Cells.RemoveSubtotal
     ws.Cells.ClearOutline
     
-    ' --- 1. GET COLUMN INDICES ---
+    ' --- 1. VALIDATE AND GET RANGES ---
+    Dim hierarchyIndices() As Long, subtotalIndices() As Long, dataRange As Range
+    If Not PrepareAndValidate(ws, hierarchyIndices, subtotalIndices, dataRange) Then
+        GoTo Cleanup ' Stop if validation fails
+    End If
+    
+    ' --- 2. SORT ---
+    Call SortData(ws, dataRange, hierarchyIndices)
+    
+    ' --- 3. APPLY SUBTOTALS ---
+    Call ApplyAllSubtotals(dataRange, hierarchyIndices, subtotalIndices)
+
+Cleanup:
+    Call RestoreExcelSettings
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    Resume Cleanup
+End Sub
+
+' --- Modularized Sub-Procedures ---
+
+Private Function PrepareAndValidate(ws As Worksheet, ByRef hierarchyIndices() As Long, ByRef subtotalIndices() As Long, ByRef dataRange As Range) As Boolean
+    ' Gets all column indices and defines the main data range. Returns False if any error occurs.
     Application.StatusBar = "Validating column selections..."
-    Dim hierarchyColIndices() As Long
-    ReDim hierarchyColIndices(1 To hierarchyColNames.Count)
     
-    Dim subtotalColIndices() As Long
-    ReDim subtotalColIndices(1 To subtotalColNames.Count)
+    ReDim hierarchyIndices(1 To hierarchyColNames.Count)
+    ReDim subtotalIndices(1 To subtotalColNames.Count)
     
-    Dim i As Long
-    Dim colIdx As Long
+    Dim i As Long, colIdx As Long
     
+    ' Get Hierarchy Column Indices
     For i = 1 To hierarchyColNames.Count
         colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
         If colIdx = 0 Then
-            MsgBox "Could not find the HIERARCHY column '" & hierarchyColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes.", vbCritical, "Column Not Found"
-            GoTo Cleanup
+            MsgBox "Could not find HIERARCHY column '" & hierarchyColNames(i) & "' in header row " & headerRow, vbCritical
+            PrepareAndValidate = False
+            Exit Function
         End If
-        hierarchyColIndices(i) = colIdx
+        hierarchyIndices(i) = colIdx
     Next i
     
+    ' Get Subtotal Column Indices
     For i = 1 To subtotalColNames.Count
         colIdx = GetColumnIndexByText(subtotalColNames(i), ws, headerRow)
         If colIdx = 0 Then
-            MsgBox "Could not find the SUBTOTAL column '" & subtotalColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes.", vbCritical, "Column Not Found"
-            GoTo Cleanup
+            MsgBox "Could not find SUBTOTAL column '" & subtotalColNames(i) & "' in header row " & headerRow, vbCritical
+            PrepareAndValidate = False
+            Exit Function
         End If
-        subtotalColIndices(i) = colIdx
+        subtotalIndices(i) = colIdx
     Next i
     
-    ' --- 2. SORT DATA ---
-    Application.StatusBar = "Sorting data by hierarchy. This may take a moment for large datasets..."
-    Dim dataRange As Range
-    Dim lastRow As Long
-    Dim lastCol As Long
-
-    ' Define the data range robustly
+    ' Define Data Range
+    Dim lastRow As Long, lastCol As Long
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     On Error Resume Next
     lastRow = ws.Cells.Find(What:="*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
-    On Error GoTo ErrorHandler
-
-    If lastRow = 0 Or lastRow < headerRow Then
-        MsgBox "No data found below the specified header row.", vbInformation, "Empty Data"
-        GoTo Cleanup
+    On Error GoTo 0
+    
+    If lastRow < headerRow Then
+        MsgBox "No data found below header row " & headerRow, vbInformation
+        PrepareAndValidate = False
+        Exit Function
     End If
-
     Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
     
+    PrepareAndValidate = True
+End Function
+
+Private Sub SortData(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
+    Application.StatusBar = "Sorting data by hierarchy. This may take a moment..."
+    Dim i As Long
     With ws.Sort
         .SortFields.Clear
-        For i = 1 To UBound(hierarchyColIndices)
-            .SortFields.Add Key:=ws.Columns(hierarchyColIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        For i = 1 To UBound(hierarchyIndices)
+            .SortFields.Add Key:=ws.Columns(hierarchyIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
         Next i
         .SetRange dataRange
         .Header = xlYes
@@ -282,59 +331,52 @@ Sub RunMultiLevelSubtotal()
         .SortMethod = xlPinYin
         .Apply
     End With
+End Sub
+
+Private Sub ApplyAllSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
+    Dim totalLevels As Long, i As Long, levelCounter As Long
+    totalLevels = UBound(hierarchyIndices)
     
-    ' --- 3. APPLY SUBTOTALS ---
-    Dim totalLevels As Long
-    totalLevels = UBound(hierarchyColIndices)
-    
-    ' First, apply the subtotal for the most detailed (last) hierarchy level
+    ' Apply first (most detailed) level
     Application.StatusBar = "Applying subtotal level 1 of " & totalLevels & ": " & hierarchyColNames(totalLevels) & "..."
-    dataRange.Subtotal GroupBy:=hierarchyColIndices(totalLevels), _
-                       Function:=xlSum, _
-                       TotalList:=subtotalColIndices, _
-                       Replace:=True, _
-                       PageBreaks:=False, _
-                       SummaryBelowData:=summaryBelow
-                       
-    ' Now, loop through the remaining hierarchy levels from second-to-last up to the first
+    dataRange.Subtotal GroupBy:=hierarchyIndices(totalLevels), Function:=xlSum, TotalList:=subtotalIndices, _
+        Replace:=True, PageBreaks:=False, SummaryBelowData:=summaryBelow
+        
+    ' Apply remaining levels
     If totalLevels > 1 Then
-        Dim levelCounter As Long
         levelCounter = 2
         For i = totalLevels - 1 To 1 Step -1
             Application.StatusBar = "Applying subtotal level " & levelCounter & " of " & totalLevels & ": " & hierarchyColNames(i) & "..."
-            dataRange.Subtotal GroupBy:=hierarchyColIndices(i), _
-                               Function:=xlSum, _
-                               TotalList:=subtotalColIndices, _
-                               Replace:=False, _
-                               PageBreaks:=False, _
-                               SummaryBelowData:=summaryBelow
+            dataRange.Subtotal GroupBy:=hierarchyIndices(i), Function:=xlSum, TotalList:=subtotalIndices, _
+                Replace:=False, PageBreaks:=False, SummaryBelowData:=summaryBelow
             levelCounter = levelCounter + 1
         Next i
     End If
-    
-    Application.StatusBar = "Finalizing..."
-    ' SPEED BOOST: AutoFit is very slow on large datasets. It is commented out.
-    ' The user can manually AutoFit columns after the macro runs if needed.
-    ' ws.Columns.AutoFit
-    
-    Application.StatusBar = "Process complete!"
+End Sub
 
-Cleanup:
-    ' --- 4. CLEANUP ---
+Private Sub RestoreExcelSettings()
     ' Always restore Excel's settings, even if an error occurs.
     Application.EnableEvents = True
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
-    ' Reset the status bar so it disappears
     Application.StatusBar = False
-    Set ws = Nothing
-    Set dataRange = Nothing
+    
+    ' Clean up global objects
     Set hierarchyColNames = Nothing
     Set subtotalColNames = Nothing
-    Exit Sub
-
-ErrorHandler:
-    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
-    ' Make sure to reset settings on error too
-    Resume Cleanup
 End Sub
+
+Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
+    ' Finds a column index by its displayed text, not its underlying value.
+    Dim lastCol As Long
+    lastCol = ws.Cells(headerRowNum, ws.Columns.Count).End(xlToLeft).Column
+    
+    Dim i As Long
+    For i = 1 To lastCol
+        If Trim(ws.Cells(headerRowNum, i).Text) = colName Then
+            GetColumnIndexByText = i
+            Exit Function
+        End If
+    Next i
+    GetColumnIndexByText = 0 ' Return 0 if not found
+End Function
