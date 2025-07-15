@@ -96,10 +96,11 @@ Private Sub UserForm_Initialize()
     For i = 1 To lastCol
         ' Use the globally available headerRow variable directly
         Dim headerValue As String
-        headerValue = Trim(ws.Cells(headerRow, i).Value) ' FIX: Trim spaces from header
+        ' FIX: Use .Text to get the displayed value (e.g., "Jan-23") not the underlying value (e.g., 01/01/2023)
+        headerValue = Trim(ws.Cells(headerRow, i).Text)
         
         If headerValue <> "" Then
-            Me.lstAvailableCols.AddItem headerValue ' Add the clean value
+            Me.lstAvailableCols.AddItem headerValue ' Add the clean, displayed value
         End If
     Next i
 End Sub
@@ -183,6 +184,26 @@ Sub ShowSubtotalForm()
     frmMultiSubtotal.Show
 End Sub
 
+' --- NEW: Helper function to find a column by its displayed text ---
+Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
+    ' Helper function to find a column index by its displayed text, not its underlying value.
+    ' This correctly handles formatted dates, numbers, etc.
+    Dim lastCol As Long
+    lastCol = ws.Cells(headerRowNum, ws.Columns.Count).End(xlToLeft).Column
+    
+    Dim i As Long
+    For i = 1 To lastCol
+        ' Compare the clean, displayed text of the cell with the desired column name
+        If Trim(ws.Cells(headerRowNum, i).Text) = colName Then
+            GetColumnIndexByText = i
+            Exit Function
+        End If
+    Next i
+    
+    ' Return 0 if not found, which we can check for
+    GetColumnIndexByText = 0
+End Function
+
 
 ' --- Core logic, called from the form ---
 Sub RunMultiLevelSubtotal()
@@ -207,25 +228,25 @@ Sub RunMultiLevelSubtotal()
     ReDim subtotalColIndices(1 To subtotalColNames.Count)
     
     Dim i As Long
-    Dim matchResult As Variant
+    Dim colIdx As Long
     
-    ' --- FIX: Use robust Application.Match with specific error handling ---
+    ' --- FIX: Use robust GetColumnIndexByText function instead of Application.Match ---
     For i = 1 To hierarchyColNames.Count
-        matchResult = Application.Match(hierarchyColNames(i), ws.Rows(headerRow), 0)
-        If IsError(matchResult) Then
-            MsgBox "Could not find the HIERARCHY column '" & hierarchyColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes or hidden spaces.", vbCritical, "Column Not Found"
+        colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
+        If colIdx = 0 Then
+            MsgBox "Could not find the HIERARCHY column '" & hierarchyColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes.", vbCritical, "Column Not Found"
             GoTo Cleanup
         End If
-        hierarchyColIndices(i) = CLng(matchResult)
+        hierarchyColIndices(i) = colIdx
     Next i
     
     For i = 1 To subtotalColNames.Count
-        matchResult = Application.Match(subtotalColNames(i), ws.Rows(headerRow), 0)
-        If IsError(matchResult) Then
-            MsgBox "Could not find the SUBTOTAL column '" & subtotalColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes or hidden spaces.", vbCritical, "Column Not Found"
+        colIdx = GetColumnIndexByText(subtotalColNames(i), ws, headerRow)
+        If colIdx = 0 Then
+            MsgBox "Could not find the SUBTOTAL column '" & subtotalColNames(i) & "' in header row " & headerRow & "." & vbCrLf & vbCrLf & "Please check for spelling mistakes.", vbCritical, "Column Not Found"
             GoTo Cleanup
         End If
-        subtotalColIndices(i) = CLng(matchResult)
+        subtotalColIndices(i) = colIdx
     Next i
     
     ' --- 2. SORT DATA ---
