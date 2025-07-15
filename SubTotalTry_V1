@@ -1,6 +1,6 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This code does not need to be changed.
+'== This is the updated code for the UserForm.
 '====================================================================================
 
 Option Explicit
@@ -8,20 +8,61 @@ Option Explicit
 ' --- Form Control Event Handlers ---
 
 Private Sub btnAddHierarchy_Click()
-    Call MoveListItem(lstAvailableCols, lstHierarchyOrder, True) ' Prevent duplicates
+    Call MoveSelectedItems(lstAvailableCols, lstHierarchyOrder, True)
 End Sub
 
 Private Sub btnRemoveHierarchy_Click()
-    Call MoveListItem(lstHierarchyOrder, lstAvailableCols, False) ' Allow move back
+    ' --- FIX: Explicitly move items back to the Available list ---
+    Dim i As Long
+    For i = lstHierarchyOrder.ListCount - 1 To 0 Step -1
+        If lstHierarchyOrder.Selected(i) Then
+            lstAvailableCols.AddItem lstHierarchyOrder.List(i)
+            lstHierarchyOrder.RemoveItem i
+        End If
+    Next i
 End Sub
 
 Private Sub btnAddSubtotal_Click()
-    Call MoveListItem(lstAvailableCols, lstSubtotalCols, True) ' Prevent duplicates
+    Call MoveSelectedItems(lstAvailableCols, lstSubtotalCols, True)
 End Sub
 
 Private Sub btnRemoveSubtotal_Click()
-    Call MoveListItem(lstSubtotalCols, lstAvailableCols, False) ' Allow move back
+    ' --- FIX: Explicitly move items back to the Available list ---
+    Dim i As Long
+    For i = lstSubtotalCols.ListCount - 1 To 0 Step -1
+        If lstSubtotalCols.Selected(i) Then
+            lstAvailableCols.AddItem lstSubtotalCols.List(i)
+            lstSubtotalCols.RemoveItem i
+        End If
+    Next i
 End Sub
+
+Private Sub btnAddAllSubtotals_Click()
+    ' --- NEW: Add all remaining available columns to the subtotal list ---
+    If lstAvailableCols.ListCount = 0 Then Exit Sub
+    
+    Dim i As Long, j As Long
+    Dim itemExists As Boolean
+    
+    For i = 0 To lstAvailableCols.ListCount - 1
+        itemExists = False
+        ' Check for duplicates to be safe
+        For j = 0 To lstSubtotalCols.ListCount - 1
+            If lstSubtotalCols.List(j) = lstAvailableCols.List(i) Then
+                itemExists = True
+                Exit For
+            End If
+        Next j
+        
+        If Not itemExists Then
+            lstSubtotalCols.AddItem lstAvailableCols.List(i)
+        End If
+    Next i
+    
+    ' Clear the available list as all items have been moved
+    lstAvailableCols.Clear
+End Sub
+
 
 Private Sub btnCancel_Click()
     Unload Me
@@ -139,7 +180,8 @@ Private Sub PopulateAvailableColumns()
     Next i
 End Sub
 
-Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
+Private Sub MoveSelectedItems(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
+    ' Generic helper to move selected items from one listbox to another.
     Dim i As Long, j As Long
     Dim itemExists As Boolean
     
@@ -166,6 +208,7 @@ Private Sub MoveListItem(sourceList As MSForms.ListBox, destList As MSForms.List
 End Sub
 
 Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
+    ' Moves a selected item up or down within a single listbox.
     Dim selectedIdx As Long
     selectedIdx = lb.ListIndex
     
@@ -183,9 +226,7 @@ End Sub
 
 '====================================================================================
 '== CODE FOR THE MODULE: Module1 (or any other name)
-'== In the VBE, go to Insert -> Module.
-'== Paste this entire section into that module's code window.
-'== IMPORTANT: Go to Tools -> References... and check "Microsoft Scripting Runtime"
+'== This code does not need to be changed.
 '====================================================================================
 
 Option Explicit
@@ -549,4 +590,3 @@ Private Sub SwapRows(ByRef arr As Variant, row1 As Long, row2 As Long)
         arr(row2, i) = temp
     Next i
 End Sub
-
