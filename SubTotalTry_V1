@@ -1,6 +1,6 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This is the updated code for the UserForm.
+'== This code does not need to be changed.
 '====================================================================================
 
 Option Explicit
@@ -226,7 +226,8 @@ End Sub
 
 '====================================================================================
 '== CODE FOR THE MODULE: Module1 (or any other name)
-'== This code does not need to be changed.
+'== This code has been updated to be more robust.
+'== IMPORTANT: Go to Tools -> References... and check "Microsoft Scripting Runtime"
 '====================================================================================
 
 Option Explicit
@@ -319,7 +320,6 @@ Private Function PrepareAndReadData(ws As Worksheet, ByRef hierarchyIndices() As
     ' Validates selections, gets column indices, and reads data into memory arrays.
     Application.StatusBar = "Validating selections and reading data..."
     
-    ' Get column indices
     Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
     ReDim hierarchyIndices(1 To hierarchyColNames.Count)
     ReDim subtotalIndices(1 To subtotalColNames.Count)
@@ -336,7 +336,6 @@ Private Function PrepareAndReadData(ws As Worksheet, ByRef hierarchyIndices() As
         subtotalIndices(i) = colIdx
     Next i
     
-    ' Define range and read into arrays
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     If lastRow <= headerRow Then MsgBox "No data found below header row.", vbInformation: Exit Function
@@ -351,63 +350,46 @@ Private Function PrepareAndReadData(ws As Worksheet, ByRef hierarchyIndices() As
 End Function
 
 Private Sub BuildOutputArray(valueArray As Variant, formulaArray As Variant, hierarchyIndices() As Long, subtotalIndices() As Long, ByRef outputArray As Variant, ByRef groupRows As Collection)
-    ' Loops through sorted data, aggregates totals, and builds the final output array.
-    Dim totals() As Double, groupTrackers() As Variant
-    Dim row As Long, i As Long, level As Long, outputRow As Long
+    ' --- ROBUST METHOD: Build output in a collection, then transfer to an array ---
+    Dim outputCollection As New Collection
+    Dim rowData() As Variant
     Dim numRows As Long, numCols As Long, numLevels As Long
-    Dim totalRowsToAdd As Long
+    Dim row As Long, i As Long, level As Long
     
     numRows = UBound(valueArray, 1)
     numCols = UBound(valueArray, 2)
     numLevels = UBound(hierarchyIndices)
     Set groupRows = New Collection
     
-    ' First pass: count how many total rows we will need
-    ReDim groupTrackers(1 To numLevels)
-    For level = 1 To numLevels: groupTrackers(level) = valueArray(2, hierarchyIndices(level)): Next
+    ' --- 1. Add Header Row to Collection ---
+    ReDim rowData(1 To numCols)
+    For i = 1 To numCols: rowData(i) = valueArray(1, i): Next
+    outputCollection.Add rowData
     
-    For row = 3 To numRows
-        For level = numLevels To 1 Step -1
-            If CStr(valueArray(row, hierarchyIndices(level))) <> CStr(groupTrackers(level)) Then
-                totalRowsToAdd = totalRowsToAdd + 1
-                For i = level To numLevels: groupTrackers(i) = valueArray(row, hierarchyIndices(i)): Next
-                Exit For
-            End If
-        Next level
-    Next row
-    totalRowsToAdd = totalRowsToAdd + 1 ' For the final grand total
-    
-    ' Size the output array
-    ReDim outputArray(1 To numRows + totalRowsToAdd, 1 To numCols)
-    outputRow = 1
-    
-    ' Copy headers
-    For i = 1 To numCols: outputArray(1, i) = valueArray(1, i): Next
-    outputRow = 2
-    
-    ' Main processing loop
+    ' --- 2. Main Processing Loop ---
     Dim grandTotals() As Double
     ReDim grandTotals(1 To numCols)
     Dim dictLevels As New Scripting.Dictionary
     For level = 1 To numLevels: Set dictLevels(level) = New Scripting.Dictionary: Next
     
     For row = 2 To numRows
-        ' Add current data row to output
-        For i = 1 To numCols: outputArray(outputRow, i) = formulaArray(row, i): Next
+        ' Add current data row
+        ReDim rowData(1 To numCols)
+        For i = 1 To numCols: rowData(i) = formulaArray(row, i): Next
+        outputCollection.Add rowData
         
-        ' Update totals
+        ' Update totals for all levels
+        Dim key As String, totals() As Double
         For level = 1 To numLevels
-            Dim key As String: key = ""
+            key = ""
             For i = 1 To level: key = key & CStr(valueArray(row, hierarchyIndices(i))) & Chr(0): Next
             
             If Not dictLevels(level).Exists(key) Then
-                ReDim totals(1 To numCols)
-                dictLevels(level)(key) = totals
+                ReDim totals(1 To numCols): dictLevels(level)(key) = totals
             End If
             
             totals = dictLevels(level)(key)
             For i = 1 To UBound(subtotalIndices)
-                ' --- FIX: Safely add to total, ignoring errors ---
                 If Not IsError(valueArray(row, subtotalIndices(i))) Then
                     totals(subtotalIndices(i)) = totals(subtotalIndices(i)) + Val(valueArray(row, subtotalIndices(i)))
                 End If
@@ -417,13 +399,12 @@ Private Sub BuildOutputArray(valueArray As Variant, formulaArray As Variant, hie
         
         ' Update grand totals
         For i = 1 To UBound(subtotalIndices)
-            ' --- FIX: Safely add to grand total, ignoring errors ---
             If Not IsError(valueArray(row, subtotalIndices(i))) Then
                 grandTotals(subtotalIndices(i)) = grandTotals(subtotalIndices(i)) + Val(valueArray(row, subtotalIndices(i)))
             End If
         Next i
         
-        ' Check for group breaks and write total rows
+        ' Check for group breaks and add total rows
         Dim nextRow As Long
         If row = numRows Then nextRow = row Else nextRow = row + 1
         
@@ -439,25 +420,36 @@ Private Sub BuildOutputArray(valueArray As Variant, formulaArray As Variant, hie
                 Dim totalRowData As Variant
                 totalRowData = dictLevels(level)(currentKey)
                 
-                groupRows.Add outputRow + 1
-                outputRow = outputRow + 1
-                
-                outputArray(outputRow, hierarchyIndices(level)) = valueArray(row, hierarchyIndices(level)) & " Total"
+                ReDim rowData(1 To numCols)
+                rowData(hierarchyIndices(level)) = valueArray(row, hierarchyIndices(level)) & " Total"
                 For i = 1 To UBound(subtotalIndices)
-                    outputArray(outputRow, subtotalIndices(i)) = totalRowData(subtotalIndices(i))
+                    rowData(subtotalIndices(i)) = totalRowData(subtotalIndices(i))
                 Next i
+                
+                outputCollection.Add rowData
+                groupRows.Add outputCollection.Count ' Mark this row number for formatting
                 dictLevels(level).Remove currentKey
             End If
         Next level
-        outputRow = outputRow + 1
     Next row
     
-    ' Add Grand Total Row
-    groupRows.Add outputRow
-    outputArray(outputRow, hierarchyIndices(1)) = "Grand Total"
+    ' --- 3. Add Grand Total Row ---
+    ReDim rowData(1 To numCols)
+    rowData(hierarchyIndices(1)) = "Grand Total"
     For i = 1 To UBound(subtotalIndices)
-        outputArray(outputRow, subtotalIndices(i)) = grandTotals(subtotalIndices(i))
+        rowData(subtotalIndices(i)) = grandTotals(subtotalIndices(i))
     Next i
+    outputCollection.Add rowData
+    groupRows.Add outputCollection.Count
+    
+    ' --- 4. Convert Collection to Final Array ---
+    ReDim outputArray(1 To outputCollection.Count, 1 To numCols)
+    For row = 1 To outputCollection.Count
+        rowData = outputCollection(row)
+        For i = 1 To numCols
+            outputArray(row, i) = rowData(i)
+        Next i
+    Next row
 End Sub
 
 Private Function CreateOutputSheet() As Worksheet
@@ -479,9 +471,7 @@ Private Sub ApplyFormattingAndGrouping(ws As Worksheet, groupRows As Collection,
     ' Applies bolding and outline grouping to the final report.
     Dim rowItem As Variant
     For Each rowItem In groupRows
-        With ws.Rows(rowItem)
-            .Font.Bold = True
-        End With
+        ws.Rows(rowItem).Font.Bold = True
     Next rowItem
     
     ws.Outline.ShowLevels rowLevels:=numLevels + 1
@@ -534,12 +524,12 @@ Public Sub QuickSort2DArray(ByRef dataArray As Variant, ByVal firstRow As Long, 
             Loop
             If i < j Then
                 SwapRows dataArray, i, j
-                SwapRows formulaArray, i, j ' Swap corresponding formula rows
+                SwapRows formulaArray, i, j
             End If
         Loop
         
         SwapRows dataArray, pivotRow, j
-        SwapRows formulaArray, pivotRow, j ' Swap corresponding formula rows
+        SwapRows formulaArray, pivotRow, j
         
         QuickSort2DArray dataArray, firstRow, j - 1, sortColIndices, formulaArray
         QuickSort2DArray dataArray, j + 1, lastRow, sortColIndices, formulaArray
@@ -553,21 +543,18 @@ Private Function CompareRows(dataArray As Variant, row1 As Long, row2 As Long, s
         Dim col As Long
         col = sortColIndices(i)
         
-        ' --- FIX: Handle potential error values to prevent Type Mismatch ---
         Dim val1 As Variant, val2 As Variant
         val1 = dataArray(row1, col)
         val2 = dataArray(row2, col)
         
         If IsError(val1) And IsError(val2) Then
-            ' Treat two errors as equal, continue to next sort level
         ElseIf IsError(val1) Then
-            CompareRows = -1 ' Treat errors as "less than" everything else
+            CompareRows = -1
             Exit Function
         ElseIf IsError(val2) Then
-            CompareRows = 1 ' Treat everything else as "greater than" errors
+            CompareRows = 1
             Exit Function
         Else
-            ' No errors, proceed with normal comparison
             If val1 < val2 Then
                 CompareRows = -1
                 Exit Function
@@ -577,7 +564,7 @@ Private Function CompareRows(dataArray As Variant, row1 As Long, row2 As Long, s
             End If
         End If
     Next i
-    CompareRows = 0 ' All sort columns are equal
+    CompareRows = 0
 End Function
 
 Private Sub SwapRows(ByRef arr As Variant, row1 As Long, row2 As Long)
