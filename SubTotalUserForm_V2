@@ -50,22 +50,24 @@ Private Sub btnOK_Click()
     End If
     
     ' --- POPULATE GLOBAL COLLECTIONS ---
-    Set modMultiSubtotal.hierarchyColNames = New Collection
+    ' Directly access the public variables from the module
+    Set hierarchyColNames = New Collection
     Dim i As Long
     For i = 0 To lstHierarchyOrder.ListCount - 1
-        modMultiSubtotal.hierarchyColNames.Add lstHierarchyOrder.List(i)
+        hierarchyColNames.Add lstHierarchyOrder.List(i)
     Next i
     
-    Set modMultiSubtotal.subtotalColNames = New Collection
+    Set subtotalColNames = New Collection
     For i = 0 To lstSubtotalCols.ListCount - 1
-        modMultiSubtotal.subtotalColNames.Add lstSubtotalCols.List(i)
+        subtotalColNames.Add lstSubtotalCols.List(i)
     Next i
     
-    modMultiSubtotal.summaryBelow = Me.optSummaryBelow.Value
+    summaryBelow = Me.optSummaryBelow.Value
     
     ' --- HIDE FORM AND RUN MAIN SUB ---
     Me.Hide
-    Call modMultiSubtotal.RunMultiLevelSubtotal
+    ' Directly call the public sub from the module
+    Call RunMultiLevelSubtotal
     
     ' --- CLEANUP ---
     Unload Me
@@ -82,13 +84,14 @@ Private Sub UserForm_Initialize()
     If ws Is Nothing Then Exit Sub
     
     Dim lastCol As Long
-    ' Use the globally set headerRow from the module
-    lastCol = ws.Cells(modMultiSubtotal.headerRow, ws.Columns.Count).End(xlToLeft).Column
+    ' Use the globally available headerRow variable directly
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     
     Dim i As Long
     For i = 1 To lastCol
-        If Trim(ws.Cells(modMultiSubtotal.headerRow, i).Value) <> "" Then
-            Me.lstAvailableCols.AddItem ws.Cells(modMultiSubtotal.headerRow, i).Value
+        ' Use the globally available headerRow variable directly
+        If Trim(ws.Cells(headerRow, i).Value) <> "" Then
+            Me.lstAvailableCols.AddItem ws.Cells(headerRow, i).Value
         End If
     Next i
 End Sub
@@ -129,7 +132,7 @@ End Sub
 
 
 '====================================================================================
-'== CODE FOR THE MODULE: Module1
+'== CODE FOR THE MODULE: Module1 (or any other name)
 '== In the VBE, go to Insert -> Module.
 '== Paste this entire section into that module's code window.
 '====================================================================================
@@ -137,10 +140,11 @@ End Sub
 Option Explicit
 
 ' --- Global variables to hold settings from the form ---
+' Public scope makes them available to the entire VBA project (including the form)
 Public hierarchyColNames As Collection
 Public subtotalColNames As Collection
 Public summaryBelow As Boolean
-Public headerRow As Long ' NEW: Stores the user-defined header row
+Public headerRow As Long
 
 ' --- Main Subroutine to be called by the user ---
 Sub ShowSubtotalForm()
