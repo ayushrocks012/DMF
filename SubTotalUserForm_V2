@@ -74,6 +74,11 @@ Private Sub btnOK_Click()
 End Sub
 
 Private Sub UserForm_Initialize()
+    ' --- FIX: Ensure RowSource is clear to allow AddItem to work ---
+    Me.lstAvailableCols.RowSource = ""
+    Me.lstHierarchyOrder.RowSource = ""
+    Me.lstSubtotalCols.RowSource = ""
+
     ' --- Default settings ---
     Me.optSummaryBelow.Value = True
     
