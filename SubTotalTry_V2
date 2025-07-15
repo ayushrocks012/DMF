@@ -319,14 +319,12 @@ Private Sub BuildOutputArray(valueArray As Variant, formulaArray As Variant, hie
                 Dim totalRowData As Variant: totalRowData = dictLevels(level)(currentKey)
                 ReDim rowData(1 To numCols)
                 
-                ' --- NEW LOGIC: Populate parent columns and indent the label ---
                 Dim parentLevel As Long
                 For parentLevel = 1 To level - 1
                     rowData(hierarchyIndices(parentLevel)) = valueArray(row, hierarchyIndices(parentLevel))
                 Next parentLevel
                 
                 rowData(hierarchyIndices(level)) = Space((level - 1) * 3) & valueArray(row, hierarchyIndices(level)) & " Total"
-                ' --- END NEW LOGIC ---
                 
                 For i = 1 To UBound(subtotalIndices): rowData(subtotalIndices(i)) = totalRowData(subtotalIndices(i)): Next
                 outputCollection.Add rowData
@@ -401,22 +399,38 @@ Public Sub QuickSort2DArray(ByRef dataArray As Variant, ByVal firstRow As Long, 
 End Sub
 
 Private Function CompareRows(dataArray As Variant, row1 As Long, row2 As Long, sortColIndices() As Long) As Integer
+    ' Compares two rows based on the hierarchy columns. Returns -1, 0, or 1.
     Dim i As Long, col As Long, val1 As Variant, val2 As Variant
     For i = LBound(sortColIndices) To UBound(sortColIndices)
         col = sortColIndices(i)
-        val1 = dataArray(row1, col): val2 = dataArray(row2, col)
+        val1 = dataArray(row1, col)
+        val2 = dataArray(row2, col)
+        
+        ' --- FIX: Correctly structured If/ElseIf block ---
         If IsError(val1) And IsError(val2) Then
-        ElseIf IsError(val1) Then CompareRows = -1: Exit Function
-        ElseIf IsError(val2) Then CompareRows = 1: Exit Function
+            ' Both are errors, treat as equal for this level, continue to next sort column.
+        ElseIf IsError(val1) Then
+            CompareRows = -1 ' Errors come before non-errors
+            Exit Function
+        ElseIf IsError(val2) Then
+            CompareRows = 1 ' Non-errors come after errors
+            Exit Function
         Else
-            If val1 < val2 Then CompareRows = -1: Exit Function
-            ElseIf val1 > val2 Then CompareRows = 1: Exit Function
+            ' Neither is an error, so a direct comparison is safe.
+            If val1 < val2 Then
+                CompareRows = -1
+                Exit Function
+            ElseIf val1 > val2 Then
+                CompareRows = 1
+                Exit Function
+            End If
         End If
     Next i
-    CompareRows = 0
+    CompareRows = 0 ' All sort columns are equal
 End Function
 
 Private Sub SwapRows(ByRef arr As Variant, row1 As Long, row2 As Long)
+    ' Swaps two full rows in a 2D array.
     Dim i As Long, temp As Variant
     For i = LBound(arr, 2) To UBound(arr, 2)
         temp = arr(row1, i)
