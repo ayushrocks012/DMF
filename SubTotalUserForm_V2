@@ -230,7 +230,6 @@ Sub RunMultiLevelSubtotal()
     Dim i As Long
     Dim colIdx As Long
     
-    ' --- FIX: Use robust GetColumnIndexByText function instead of Application.Match ---
     For i = 1 To hierarchyColNames.Count
         colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
         If colIdx = 0 Then
@@ -251,8 +250,27 @@ Sub RunMultiLevelSubtotal()
     
     ' --- 2. SORT DATA ---
     Dim dataRange As Range
-    ' Define the data range starting from the dynamic header row
-    Set dataRange = ws.Cells(headerRow, 1).CurrentRegion
+    Dim lastRow As Long
+    Dim lastCol As Long
+
+    ' FIX: Define the data range robustly instead of using CurrentRegion
+    ' Find the last column in the header row
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    ' Find the last row of data in the entire sheet by searching backwards
+    On Error Resume Next ' Temporarily disable error handling in case sheet is empty
+    lastRow = ws.Cells.Find(What:="*", _
+                            SearchOrder:=xlByRows, _
+                            SearchDirection:=xlPrevious).Row
+    On Error GoTo ErrorHandler ' Re-enable error handling
+
+    ' Check if any data exists or if lastRow is less than headerRow
+    If lastRow = 0 Or lastRow < headerRow Then
+        MsgBox "No data found below the specified header row.", vbInformation, "Empty Data"
+        GoTo Cleanup
+    End If
+
+    ' Define the data range from the header row to the last used row and column
+    Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
     
     With ws.Sort
         .SortFields.Clear
