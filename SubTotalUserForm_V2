@@ -1,7 +1,6 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== Right-click the form in the VBE Project Explorer and select "View Code".
-'== Paste this entire section into that code window.
+'== This code does not need to be changed.
 '====================================================================================
 
 Option Explicit
@@ -184,7 +183,7 @@ Sub ShowSubtotalForm()
     frmMultiSubtotal.Show
 End Sub
 
-' --- NEW: Helper function to find a column by its displayed text ---
+' --- Helper function to find a column by its displayed text ---
 Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
     ' Helper function to find a column index by its displayed text, not its underlying value.
     ' This correctly handles formatted dates, numbers, etc.
@@ -213,14 +212,18 @@ Sub RunMultiLevelSubtotal()
     On Error GoTo ErrorHandler
     
     ' --- 0. PREPARATION ---
+    ' SPEED BOOST: Disable events, screen updating, and calculations for maximum speed.
+    Application.EnableEvents = False
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
+    Application.StatusBar = "Preparing to process subtotals..."
     
     ' Clear any previous subtotals and outlines
     ws.Cells.RemoveSubtotal
     ws.Cells.ClearOutline
     
     ' --- 1. GET COLUMN INDICES ---
+    Application.StatusBar = "Validating column selections..."
     Dim hierarchyColIndices() As Long
     ReDim hierarchyColIndices(1 To hierarchyColNames.Count)
     
@@ -249,37 +252,31 @@ Sub RunMultiLevelSubtotal()
     Next i
     
     ' --- 2. SORT DATA ---
+    Application.StatusBar = "Sorting data by hierarchy. This may take a moment for large datasets..."
     Dim dataRange As Range
     Dim lastRow As Long
     Dim lastCol As Long
 
-    ' FIX: Define the data range robustly instead of using CurrentRegion
-    ' Find the last column in the header row
+    ' Define the data range robustly
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
-    ' Find the last row of data in the entire sheet by searching backwards
-    On Error Resume Next ' Temporarily disable error handling in case sheet is empty
-    lastRow = ws.Cells.Find(What:="*", _
-                            SearchOrder:=xlByRows, _
-                            SearchDirection:=xlPrevious).Row
-    On Error GoTo ErrorHandler ' Re-enable error handling
+    On Error Resume Next
+    lastRow = ws.Cells.Find(What:="*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+    On Error GoTo ErrorHandler
 
-    ' Check if any data exists or if lastRow is less than headerRow
     If lastRow = 0 Or lastRow < headerRow Then
         MsgBox "No data found below the specified header row.", vbInformation, "Empty Data"
         GoTo Cleanup
     End If
 
-    ' Define the data range from the header row to the last used row and column
     Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
     
     With ws.Sort
         .SortFields.Clear
-        ' Add each hierarchy column to the sort fields in the specified order
         For i = 1 To UBound(hierarchyColIndices)
             .SortFields.Add Key:=ws.Columns(hierarchyColIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
         Next i
         .SetRange dataRange
-        .Header = xlYes ' The range starts with the header, so this is correct
+        .Header = xlYes
         .MatchCase = False
         .Orientation = xlTopToBottom
         .SortMethod = xlPinYin
@@ -287,13 +284,12 @@ Sub RunMultiLevelSubtotal()
     End With
     
     ' --- 3. APPLY SUBTOTALS ---
-    ' This is the core trick: Apply subtotals for each level, from the
-    ' most detailed level up to the highest level.
-    ' The first call uses Replace:=True to set up the structure.
-    ' Subsequent calls use Replace:=False to add nested levels.
+    Dim totalLevels As Long
+    totalLevels = UBound(hierarchyColIndices)
     
     ' First, apply the subtotal for the most detailed (last) hierarchy level
-    dataRange.Subtotal GroupBy:=hierarchyColIndices(UBound(hierarchyColIndices)), _
+    Application.StatusBar = "Applying subtotal level 1 of " & totalLevels & ": " & hierarchyColNames(totalLevels) & "..."
+    dataRange.Subtotal GroupBy:=hierarchyColIndices(totalLevels), _
                        Function:=xlSum, _
                        TotalList:=subtotalColIndices, _
                        Replace:=True, _
@@ -301,24 +297,36 @@ Sub RunMultiLevelSubtotal()
                        SummaryBelowData:=summaryBelow
                        
     ' Now, loop through the remaining hierarchy levels from second-to-last up to the first
-    If UBound(hierarchyColIndices) > 1 Then
-        For i = UBound(hierarchyColIndices) - 1 To 1 Step -1
+    If totalLevels > 1 Then
+        Dim levelCounter As Long
+        levelCounter = 2
+        For i = totalLevels - 1 To 1 Step -1
+            Application.StatusBar = "Applying subtotal level " & levelCounter & " of " & totalLevels & ": " & hierarchyColNames(i) & "..."
             dataRange.Subtotal GroupBy:=hierarchyColIndices(i), _
                                Function:=xlSum, _
                                TotalList:=subtotalColIndices, _
                                Replace:=False, _
                                PageBreaks:=False, _
                                SummaryBelowData:=summaryBelow
+            levelCounter = levelCounter + 1
         Next i
     End If
     
-    ' AutoFit columns for better readability
-    ws.Columns.AutoFit
+    Application.StatusBar = "Finalizing..."
+    ' SPEED BOOST: AutoFit is very slow on large datasets. It is commented out.
+    ' The user can manually AutoFit columns after the macro runs if needed.
+    ' ws.Columns.AutoFit
+    
+    Application.StatusBar = "Process complete!"
 
 Cleanup:
     ' --- 4. CLEANUP ---
+    ' Always restore Excel's settings, even if an error occurs.
+    Application.EnableEvents = True
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
+    ' Reset the status bar so it disappears
+    Application.StatusBar = False
     Set ws = Nothing
     Set dataRange = Nothing
     Set hierarchyColNames = Nothing
@@ -327,5 +335,6 @@ Cleanup:
 
 ErrorHandler:
     MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    ' Make sure to reset settings on error too
     Resume Cleanup
 End Sub
