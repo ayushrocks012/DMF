@@ -1,6 +1,6 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This is the code for the graphical user interface.
+'== This code does not need to be changed.
 '====================================================================================
 
 Option Explicit
@@ -245,7 +245,6 @@ Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndic
     
     ' Clear any previous subtotals and outlines first
     ws.Cells.RemoveSubtotal
-    ws.Outline.Clear
     
     Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
     ReDim hierarchyIndices(1 To hierarchyColNames.Count)
@@ -289,60 +288,43 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' Applies the standard Excel subtotal command, which is fast at inserting rows.
-    ' It will put all labels in the first hierarchy column, which we fix later.
-    Dim i As Long
-    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
-                       Function:=xlSum, _
-                       TotalList:=subtotalIndices, _
-                       Replace:=True, _
-                       PageBreaks:=False, _
-                       SummaryBelowData:=summaryBelow
-                       
-    If UBound(hierarchyIndices) > 1 Then
-        For i = 2 To UBound(hierarchyIndices)
-            dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
-                               Function:=xlSum, _
-                               TotalList:=subtotalIndices, _
-                               Replace:=False, _
-                               PageBreaks:=False, _
-                               SummaryBelowData:=summaryBelow
-        Next i
-    End If
+    ' Applies the standard Excel subtotal command.
+    ' This is the correct order: from most general to most detailed.
+    dataRange.Subtotal GroupBy:=1, Totals:=Array(1), Function:=xlSum, Replace:=True ' Dummy to clear
+    dataRange.RemoveSubtotal
+    
+    dataRange.Subtotal GroupBy:=hierarchyIndices, Function:=xlSum, TotalList:=subtotalIndices, _
+        Replace:=True, PageBreaks:=False, SummaryBelowData:=summaryBelow
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
-    ' Loops through the generated report to move total labels to their correct columns.
-    Dim lastRow As Long, r As Long, i As Long, level As Long
-    Dim labelCell As Range, totalLabel As String
+    ' --- NEW ROBUST LOGIC ---
+    ' Loops through the generated report to populate parent hierarchy values on total rows.
+    Dim lastRow As Long, r As Long, level As Long
+    Dim totalLevel As Long
     
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     
-    ' Loop from the bottom up to avoid issues with row indexing
+    ' Loop from the bottom up
     For r = lastRow To dataRange.Row + 1 Step -1
-        Set labelCell = ws.Cells(r, hierarchyIndices(1))
+        totalLevel = 0
+        ' Check if this row is a total row by finding which hierarchy column has a " Total" label
+        For level = 1 To UBound(hierarchyIndices)
+            If InStr(1, CStr(ws.Cells(r, hierarchyIndices(level)).Value), " Total", vbTextCompare) > 0 Then
+                totalLevel = level
+                Exit For
+            End If
+        Next level
         
-        ' Check if this is a subtotal row (will contain " Total")
-        If InStr(1, labelCell.Value, " Total", vbTextCompare) > 0 And Not InStr(1, labelCell.Value, "Grand Total", vbTextCompare) > 0 Then
-            totalLabel = labelCell.Value
-            
-            ' Find which level this total belongs to by checking for blank cells
-            For level = UBound(hierarchyIndices) To 1 Step -1
-                If ws.Cells(r, hierarchyIndices(level)).Value = totalLabel Then
-                    ' Found the correct level. Now move the label.
-                    labelCell.ClearContents ' Clear the incorrect label from the first column
-                    ws.Cells(r, hierarchyIndices(level)).Value = totalLabel
-                    
-                    ' Populate parent hierarchy values for context
-                    Dim parentLevel As Long
-                    For parentLevel = 1 To level - 1
-                        ' Find the first data row above to get the parent value
-                        ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(r - 1, hierarchyIndices(parentLevel)).Value
-                    Next parentLevel
-                    
-                    Exit For ' Move to the next row
-                End If
-            Next level
+        ' If it's a total row (and not the Grand Total which is handled differently)
+        If totalLevel > 0 And Not InStr(1, CStr(ws.Cells(r, hierarchyIndices(1)).Value), "Grand Total", vbTextCompare) > 0 Then
+            ' Populate parent hierarchy values for context
+            Dim parentLevel As Long
+            For parentLevel = 1 To totalLevel - 1
+                ' Copy the value from the data row immediately above the total row.
+                ' This is safe because the row above a subtotal is always part of that group.
+                ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(r - 1, hierarchyIndices(parentLevel)).Value
+            Next parentLevel
         End If
     Next r
 End Sub
