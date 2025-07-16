@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (v4 - Final)
+'== REVISED: July 16, 2025 (v5)
 '====================================================================================
 Option Explicit
 
@@ -148,18 +148,23 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== DEFINITIVE SUBROUTINE (v4)
-'== This version uses a SINGLE, direct call to the .Subtotal method, passing
-'== the full array of hierarchy columns. This is the correct and robust method.
+'== DEFINITIVE SUBROUTINE (v5)
+'== This version explicitly creates a Variant array for the GroupBy parameter
+'== to avoid subtle data type issues with the .Subtotal method.
 '==============================================================================
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' The GroupBy parameter accepts an array of column indices to create
-    ' a multi-level subtotal in one operation.
-    ' Important: The indices in the array must be relative to the dataRange.
-    ' Since our dataRange starts in column 1, the absolute worksheet column
-    ' indices stored in hierarchyIndices are correct.
+    Dim hierarchyVariant As Variant
+    Dim i As Long
     
-    dataRange.Subtotal GroupBy:=hierarchyIndices, _
+    ' The GroupBy parameter can be sensitive to the array's data type.
+    ' To ensure it's interpreted correctly, we explicitly create a
+    ' 1-based Variant array containing the column index numbers.
+    ReDim hierarchyVariant(1 To UBound(hierarchyIndices))
+    For i = 1 To UBound(hierarchyIndices)
+        hierarchyVariant(i) = hierarchyIndices(i)
+    Next i
+
+    dataRange.Subtotal GroupBy:=hierarchyVariant, _
                        Function:=xlSum, _
                        TotalList:=subtotalIndices, _
                        Replace:=True, _
@@ -193,7 +198,7 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
             
             ' Store the correct label and clear out all hierarchy columns for this row
             totalLabel = ws.Cells(r, hierarchyIndices(totalLevel)).Value
-            ws.Range(ws.Cells(r, hierarchyIndices(1)), ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices)))).ClearContents
+            ws.Range(ws.Cells(r, hierarchyIndices(1)), ws.Cells(r, ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices))).Column)).ClearContents
             
             ' Write the correct label back into its proper column
             ws.Cells(r, hierarchyIndices(totalLevel)).Value = totalLabel
