@@ -2,7 +2,7 @@
 '== CODE FOR A NEW MODULE (e.g., Module1)
 '== DESCRIPTION: This is the "In-Place" engine that works on a copy of the sheet.
 '==              It contains the core logic for the subtotal creation process.
-'== VERSION:     4.2 (Logic Fix)
+'== VERSION:     4.3 (Robust Logic Fix)
 '====================================================================================
 Option Explicit
 
@@ -228,27 +228,9 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
         ' Loop backwards through the rows for the current level
         For r = lastDataRow To headerRowNum + 1 Step -1
             
-            ' A group break must be triggered if the value changes OR if the row above is already a subtotal row.
-            ' This prevents lower-level totals from breaking the logic for higher-level totals.
-            Dim triggerBreak As Boolean: triggerBreak = False
-            
-            If r = headerRowNum + 1 Then
-                triggerBreak = True ' Always trigger a break at the very first data row
-            Else
-                ' Check if the row above is a subtotal row (from a lower-level pass)
-                Dim isRowAboveSubtotal As Boolean
-                isRowAboveSubtotal = InStr(1, ws.Cells(r - 1, subtotalIndices(1)).Formula, "SUBTOTAL") > 0
-                
-                ' Check for a value change in the current hierarchy level's column
-                Dim isValueChange As Boolean
-                isValueChange = (CStr(ws.Cells(r, hierarchyIndices(level)).Value) <> CStr(ws.Cells(r - 1, hierarchyIndices(level)).Value))
-                
-                If isValueChange Or isRowAboveSubtotal Then
-                    triggerBreak = True
-                End If
-            End If
-
-            If triggerBreak Then
+            ' A group break is triggered if the hierarchy changes at the current level or any parent level.
+            ' This is the robust way to detect a true group change, ignoring interference from prior subtotal rows.
+            If IsDifferentGroup(ws, r, r - 1, level, hierarchyIndices) Or r = headerRowNum + 1 Then
                 
                 ' --- 1. DEFINE RANGES ---
                 formulaStartRow = r
@@ -324,6 +306,20 @@ End Sub
 '==============================================================================
 ' --- Utility and Helper Functions ---
 '==============================================================================
+
+Private Function IsDifferentGroup(ws As Worksheet, r1 As Long, r2 As Long, currentLevel As Long, hierarchyIndices() As Long) As Boolean
+    ' Checks if two rows belong to a different group by comparing all hierarchy values
+    ' from the highest level (1) down to the current level. This is the key to the robust logic.
+    Dim i As Long
+    For i = 1 To currentLevel
+        If CStr(ws.Cells(r1, hierarchyIndices(i)).Value) <> CStr(ws.Cells(r2, hierarchyIndices(i)).Value) Then
+            IsDifferentGroup = True
+            Exit Function ' A difference was found, no need to check further
+        End If
+    Next i
+    ' If the loop completes, no differences were found up to the current level
+    IsDifferentGroup = False
+End Function
 
 Private Function BuildSubtotalFormula(ws As Worksheet, ByVal colIdx As Long, ByVal startRow As Long, ByVal endRow As Long) As String
     ' Constructs a =SUBTOTAL(9, A1:A10) style formula string.
