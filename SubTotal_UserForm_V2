@@ -1,0 +1,219 @@
+'====================================================================================
+'== CODE FOR THE USERFORM: frmMultiSubtotal
+'== DESCRIPTION: Handles user interaction for selecting worksheets, hierarchy
+'==              levels, and subtotal columns.
+'====================================================================================
+Option Explicit
+
+' --- Form Control Event Handlers ---
+
+Private Sub btnAddHierarchy_Click()
+    ' Moves selected columns from 'Available' to 'Hierarchy'
+    Call MoveSelectedItems(Me.lstAvailableCols, Me.lstHierarchyOrder, True)
+End Sub
+
+Private Sub btnRemoveHierarchy_Click()
+    ' Moves selected columns from 'Hierarchy' back to 'Available'
+    Call MoveSelectedItems(Me.lstHierarchyOrder, Me.lstAvailableCols, False)
+End Sub
+
+Private Sub btnAddSubtotal_Click()
+    ' Moves selected columns from 'Available' to 'Subtotal'
+    Call MoveSelectedItems(Me.lstAvailableCols, Me.lstSubtotalCols, True)
+End Sub
+
+Private Sub btnRemoveSubtotal_Click()
+    ' Moves selected columns from 'Subtotal' back to 'Available'
+    Call MoveSelectedItems(Me.lstSubtotalCols, Me.lstAvailableCols, False)
+End Sub
+
+Private Sub btnAddAllSubtotals_Click()
+    ' Moves all remaining numeric columns to the subtotal list
+    Call AddAllNumericColsToSubtotals
+End Sub
+
+Private Sub btnCancel_Click()
+    ' Unloads the form and cancels the operation
+    Call CancelAndCleanup
+    Unload Me
+End Sub
+
+Private Sub btnUp_Click()
+    ' Moves a selected item up in the hierarchy order list
+    Call MoveListItemUpDown(Me.lstHierarchyOrder, -1)
+End Sub
+
+Private Sub btnDown_Click()
+    ' Moves a selected item down in the hierarchy order list
+    Call MoveListItemUpDown(Me.lstHierarchyOrder, 1)
+End Sub
+
+Private Sub btnOK_Click()
+    ' --- 1. VALIDATE USER SELECTIONS ---
+    If Me.cboWorksheets.ListIndex = -1 Then
+        MsgBox "Please select a worksheet to process.", vbExclamation, "Validation Error"
+        Exit Sub
+    End If
+    If Me.lstHierarchyOrder.ListCount = 0 Then
+        MsgBox "Please select at least one column for the hierarchy.", vbExclamation, "Validation Error"
+        Exit Sub
+    End If
+    If Me.lstSubtotalCols.ListCount = 0 Then
+        MsgBox "Please select at least one column to subtotal.", vbExclamation, "Validation Error"
+        Exit Sub
+    End If
+    
+    ' --- 2. GATHER SETTINGS FROM FORM ---
+    ' Pass all user-defined settings to the global variables in Module1
+    targetWorksheetName = Me.cboWorksheets.Value
+    summaryBelow = Me.optSummaryBelow.Value
+    skipSort = Me.chkSkipSort.Value
+    
+    Set hierarchyColNames = New Collection
+    Dim i As Long
+    For i = 0 To Me.lstHierarchyOrder.ListCount - 1
+        hierarchyColNames.Add Me.lstHierarchyOrder.List(i)
+    Next i
+    
+    Set subtotalColNames = New Collection
+    For i = 0 To Me.lstSubtotalCols.ListCount - 1
+        subtotalColNames.Add Me.lstSubtotalCols.List(i)
+    Next i
+    
+    ' --- 3. HIDE FORM AND RUN THE ENGINE ---
+    Me.Hide
+    Call RunInPlaceSubtotal ' Main call to the engine in Module1
+    
+    ' --- 4. CLEANUP ---
+    Unload Me
+End Sub
+
+Private Sub cboWorksheets_Change()
+    ' When a new worksheet is selected, refresh the column lists
+    Call PopulateAvailableColumns
+End Sub
+
+Private Sub UserForm_Initialize()
+    ' Set default states for all controls when the form is first opened
+    Me.optSummaryBelow.Value = True
+    Me.chkSkipSort.Value = False
+    
+    ' Clear all lists to ensure a fresh start
+    Me.lstAvailableCols.Clear
+    Me.lstHierarchyOrder.Clear
+    Me.lstSubtotalCols.Clear
+    
+    ' Populate the worksheets dropdown
+    Dim ws As Worksheet
+    Me.cboWorksheets.Clear
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.Visible = xlSheetVisible Then Me.cboWorksheets.AddItem ws.Name
+    Next ws
+    
+    ' Try to select the currently active sheet by default
+    On Error Resume Next
+    Me.cboWorksheets.Value = ActiveSheet.Name
+    If Err.Number <> 0 And Me.cboWorksheets.ListCount > 0 Then
+        ' If active sheet isn't valid (e.g., a chart sheet), select the first one
+        Me.cboWorksheets.ListIndex = 0
+    End If
+    On Error GoTo 0
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    ' Ensure cleanup runs if the user closes the form with the 'X' button
+    If CloseMode = vbFormControlMenu Then
+        Call CancelAndCleanup
+    End If
+End Sub
+
+
+' --- Helper Subroutines for the Form ---
+
+Private Sub PopulateAvailableColumns()
+    ' Clears all list boxes and populates the "Available Columns" list
+    ' based on the header row of the selected worksheet.
+    
+    Me.lstAvailableCols.Clear
+    Me.lstHierarchyOrder.Clear
+    Me.lstSubtotalCols.Clear
+    
+    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
+    
+    On Error GoTo PopulateError
+    
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
+    
+    Dim lastCol As Long, i As Long, headerText As String
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    
+    ' Check if any headers were found
+    If lastCol = 1 And ws.Cells(headerRow, 1).Value = "" Then Exit Sub
+    
+    For i = 1 To lastCol
+        headerText = Trim(ws.Cells(headerRow, i).Text)
+        If headerText <> "" Then
+            Me.lstAvailableCols.AddItem headerText
+        End If
+    Next i
+    
+    Exit Sub
+PopulateError:
+    ' Silently fail if sheet is protected or other error occurs
+End Sub
+
+Private Sub MoveSelectedItems(sourceList As MSForms.ListBox, destList As MSForms.ListBox, removeItemFromSource As Boolean)
+    ' Generic helper to move items from a source listbox to a destination listbox.
+    Dim i As Long
+    
+    ' Loop backwards since we are removing items
+    For i = sourceList.ListCount - 1 To 0 Step -1
+        If sourceList.Selected(i) Then
+            destList.AddItem sourceList.List(i)
+            If removeItemFromSource Then
+                sourceList.RemoveItem i
+            End If
+        End If
+    Next i
+End Sub
+
+Private Sub MoveListItemUpDown(listBox As MSForms.ListBox, direction As Integer)
+    ' Moves a selected item up or down within a listbox.
+    ' direction: -1 for Up, 1 for Down.
+    Dim selectedIdx As Long: selectedIdx = listBox.ListIndex
+    
+    ' Exit if nothing is selected or at the boundary
+    If selectedIdx = -1 Then Exit Sub
+    If direction = -1 And selectedIdx = 0 Then Exit Sub ' Already at the top
+    If direction = 1 And selectedIdx = listBox.ListCount - 1 Then Exit Sub ' Already at the bottom
+    
+    ' Swap the items
+    Dim tempText As String: tempText = listBox.List(selectedIdx)
+    listBox.List(selectedIdx) = listBox.List(selectedIdx + direction)
+    listBox.List(selectedIdx + direction) = tempText
+    
+    ' Keep the moved item selected
+    listBox.Selected(selectedIdx + direction) = True
+End Sub
+
+Private Sub AddAllNumericColsToSubtotals()
+    ' Identifies all columns in the source sheet that appear to be numeric
+    ' and moves them to the Subtotal Columns list.
+    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
+    
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
+    
+    Dim i As Long, colIdx As Long
+    For i = Me.lstAvailableCols.ListCount - 1 To 0 Step -1
+        colIdx = GetColumnIndexByText(Me.lstAvailableCols.List(i), ws, headerRow)
+        If colIdx > 0 Then
+            ' Check if the first data cell in the column is numeric
+            If IsNumeric(ws.Cells(headerRow + 1, colIdx).Value) Then
+                Me.lstSubtotalCols.AddItem Me.lstAvailableCols.List(i)
+                Me.lstAvailableCols.RemoveItem i
+            End If
+        End If
+    Next i
+End Sub
