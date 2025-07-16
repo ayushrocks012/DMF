@@ -2,7 +2,7 @@
 '== CODE FOR A NEW MODULE (e.g., Module1)
 '== DESCRIPTION: This is the "In-Place" engine that works on a copy of the sheet.
 '==              It contains the core logic for the subtotal creation process.
-'== VERSION:     4.5 (Final Logic Fix)
+'== VERSION:     4.6 (Final Grouping Fix)
 '====================================================================================
 Option Explicit
 
@@ -274,12 +274,15 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
                 Next sc
                 
                 ' --- 4. CREATE OUTLINE GROUP ---
-                If summaryBelow Then
-                    Set groupRange = ws.Rows(formulaStartRow & ":" & formulaEndRow)
-                Else ' Summary Above
-                    Set groupRange = ws.Rows(insertAtRow + 1 & ":" & formulaEndRow + 1)
+                ' CRITICAL FIX: Only group if the range contains more than one row.
+                If formulaEndRow > formulaStartRow Then
+                    If summaryBelow Then
+                        Set groupRange = ws.Rows(formulaStartRow & ":" & formulaEndRow)
+                    Else ' Summary Above
+                        Set groupRange = ws.Rows(insertAtRow + 1 & ":" & formulaEndRow + 1)
+                    End If
+                    groupRange.Group
                 End If
-                groupRange.Group
                 
                 ' --- 5. RESET FOR NEXT GROUP ---
                 groupStartRowInLevel = prevDataRow
