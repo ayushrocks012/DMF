@@ -2,7 +2,7 @@
 '== CODE FOR A NEW MODULE (e.g., Module1)
 '== DESCRIPTION: This is the "In-Place" engine that works on a copy of the sheet.
 '==              It contains the core logic for the subtotal creation process.
-'== VERSION:     4.3 (Robust Logic Fix)
+'== VERSION:     4.4 (Definitive Logic and Formatting Fix)
 '====================================================================================
 Option Explicit
 
@@ -225,12 +225,24 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
         lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
         groupStartRowInLevel = lastDataRow ' Initialize for the first group from the bottom
 
-        ' Loop backwards through the rows for the current level
+        ' Loop backwards through the data rows for the current level
         For r = lastDataRow To headerRowNum + 1 Step -1
             
-            ' A group break is triggered if the hierarchy changes at the current level or any parent level.
-            ' This is the robust way to detect a true group change, ignoring interference from prior subtotal rows.
-            If IsDifferentGroup(ws, r, r - 1, level, hierarchyIndices) Or r = headerRowNum + 1 Then
+            ' Skip any rows that are already subtotal rows from a previous, more detailed level
+            If InStr(1, ws.Cells(r, subtotalIndices(1)).Formula, "SUBTOTAL") > 0 Then GoTo NextIteration
+            
+            ' Find the first "real" data row above the current row 'r' to compare against
+            Dim prevDataRow As Long: prevDataRow = 0
+            Dim temp_r As Long
+            For temp_r = r - 1 To headerRowNum Step -1
+                If InStr(1, ws.Cells(temp_r, subtotalIndices(1)).Formula, "SUBTOTAL") = 0 Then
+                    prevDataRow = temp_r ' Found a data row or the header row
+                    Exit For
+                End If
+            Next temp_r
+            
+            ' A group break occurs if the previous data row is the header, or if the hierarchy differs.
+            If prevDataRow <= headerRowNum Or IsDifferentGroup(ws, r, prevDataRow, level, hierarchyIndices) Then
                 
                 ' --- 1. DEFINE RANGES ---
                 formulaStartRow = r
@@ -242,13 +254,14 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
                     insertAtRow = formulaStartRow
                 End If
                 
-                ' --- 2. INSERT ROW AND ADD LABELS ---
+                ' --- 2. INSERT ROW, CLEAR FORMATTING, AND ADD LABELS ---
                 ws.Rows(insertAtRow).Insert
+                ws.Rows(insertAtRow).ClearFormats ' CRITICAL: Prevents copying unwanted formats
                 
                 ' Create the label (e.g., "Value A Total")
                 totalLabel = ws.Cells(formulaStartRow, hierarchyIndices(level)).Value & TOTAL_LABEL_SUFFIX
                 ws.Cells(insertAtRow, hierarchyIndices(level)).Value = totalLabel
-                ws.Cells(insertAtRow, hierarchyIndices(level)).Font.Bold = True
+                ws.Rows(insertAtRow).Font.Bold = True ' Apply desired format
                 
                 ' Copy parent values to the new total row for context
                 For parentLevel = 1 To level - 1
@@ -264,15 +277,14 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
                 If summaryBelow Then
                     Set groupRange = ws.Rows(formulaStartRow & ":" & formulaEndRow)
                 Else ' Summary Above
-                    ' The group range is the data rows below the new total row
                     Set groupRange = ws.Rows(insertAtRow + 1 & ":" & formulaEndRow + 1)
                 End If
                 groupRange.Group
                 
                 ' --- 5. RESET FOR NEXT GROUP ---
-                ' The start of the next group (moving up) is the row just above the current one
-                groupStartRowInLevel = r - 1
+                groupStartRowInLevel = prevDataRow
             End If
+NextIteration:
         Next r
     Next level
 End Sub
@@ -291,8 +303,9 @@ Private Sub InsertGrandTotalRow(ws As Worksheet, ByVal headerRowNum As Long, hie
         insertAtRow = headerRowNum + 1
     End If
     
-    ' Insert and format the row
+    ' Insert, clear formatting, and format the row
     ws.Rows(insertAtRow).Insert
+    ws.Rows(insertAtRow).ClearFormats
     ws.Cells(insertAtRow, hierarchyIndices(1)).Value = GRAND_TOTAL_LABEL
     ws.Rows(insertAtRow).Font.Bold = True
     
@@ -309,7 +322,7 @@ End Sub
 
 Private Function IsDifferentGroup(ws As Worksheet, r1 As Long, r2 As Long, currentLevel As Long, hierarchyIndices() As Long) As Boolean
     ' Checks if two rows belong to a different group by comparing all hierarchy values
-    ' from the highest level (1) down to the current level. This is the key to the robust logic.
+    ' from the highest level (1) down to the current level.
     Dim i As Long
     For i = 1 To currentLevel
         If CStr(ws.Cells(r1, hierarchyIndices(i)).Value) <> CStr(ws.Cells(r2, hierarchyIndices(i)).Value) Then
@@ -323,7 +336,6 @@ End Function
 
 Private Function BuildSubtotalFormula(ws As Worksheet, ByVal colIdx As Long, ByVal startRow As Long, ByVal endRow As Long) As String
     ' Constructs a =SUBTOTAL(9, A1:A10) style formula string.
-    ' This centralized function makes it easy to change the subtotal function (e.g., to AVERAGE) in one place.
     Dim colLetter As String
     colLetter = Split(ws.Cells(1, colIdx).Address, "$")(1)
     
@@ -331,8 +343,14 @@ Private Function BuildSubtotalFormula(ws As Worksheet, ByVal colIdx As Long, ByV
     If summaryBelow Then
         formulaRange = colLetter & startRow & ":" & colLetter & endRow
     Else
-        ' When summary is above, the data rows are shifted down by 1
-        formulaRange = colLetter & startRow + 1 & ":" & colLetter & endRow + 1
+        ' When summary is above, the data rows are shifted down by 1 for each inserted row
+        Dim rowsInsertedAboveStart As Long
+        rowsInsertedAboveStart = ws.Range(ws.Rows(1), ws.Rows(startRow - 1)).SpecialCells(xlCellTypeFormulas, xlNumbers).Count / UBound(subtotalIndices)
+        
+        Dim rowsInsertedAboveEnd As Long
+        rowsInsertedAboveEnd = ws.Range(ws.Rows(1), ws.Rows(endRow - 1)).SpecialCells(xlCellTypeFormulas, xlNumbers).Count / UBound(subtotalIndices)
+        
+        formulaRange = colLetter & startRow & ":" & colLetter & endRow
     End If
     
     BuildSubtotalFormula = "=SUBTOTAL(" & SUBTOTAL_FUNCTION_SUM & "," & formulaRange & ")"
