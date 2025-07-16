@@ -2,7 +2,7 @@
 '====================================================================================
 '==
 '==  PROJECT:    Multi-Level Subtotal Tool
-'==  VERSION:    4.0 (Refactored)
+'==  VERSION:    4.1 (Refactored & Fixed)
 '==  DATE:       July 16, 2025
 '==  AUTHOR:     Gemini
 '==
@@ -565,8 +565,9 @@ Private Function BuildSubtotalFormula(ws As Worksheet, ByVal colIdx As Long, ByV
     BuildSubtotalFormula = "=SUBTOTAL(" & SUBTOTAL_FUNCTION_SUM & "," & formulaRange & ")"
 End Function
 
-Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
+Public Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
     ' Finds a column's index number by searching for its header text in the specified header row.
+    ' Declared Public so it can be called from other modules, like the UserForm.
     Dim findRange As Range
     Set findRange = ws.Rows(headerRowNum).Find(What:=colName, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
     
