@@ -2,7 +2,7 @@
 '== CODE FOR A NEW MODULE (e.g., Module1)
 '== DESCRIPTION: This is the "In-Place" engine that works on a copy of the sheet.
 '==              It contains the core logic for the subtotal creation process.
-'== VERSION:     4.6 (Final Grouping Fix)
+'== VERSION:     4.7 (Definitive OutlineLevel Fix)
 '====================================================================================
 Option Explicit
 
@@ -88,13 +88,17 @@ Sub RunInPlaceSubtotal()
         Call ApplySorting(wsOutput, dataRange, hierarchyIndices)
     End If
     
-    ' --- Step 4: Create the multi-level subtotals (the core engine) ---
+    ' --- Step 4: Set the base outline level for all data rows ---
+    Application.StatusBar = "Setting up outline structure..."
+    wsOutput.Range(dataRange.Rows(2), dataRange.Rows(dataRange.Rows.Count)).Rows.OutlineLevel = UBound(hierarchyIndices) + 1
+    
+    ' --- Step 5: Create the multi-level subtotals (the core engine) ---
     Call CreateLevelSubtotals(wsOutput, headerRow, hierarchyIndices, subtotalIndices)
     
-    ' --- Step 5: Add the final Grand Total row ---
+    ' --- Step 6: Add the final Grand Total row ---
     Call InsertGrandTotalRow(wsOutput, headerRow, hierarchyIndices, subtotalIndices)
     
-    ' --- Step 6: Finalize the sheet appearance ---
+    ' --- Step 7: Finalize the sheet appearance ---
     wsOutput.Columns.AutoFit
     wsOutput.Activate
     wsOutput.Cells(1, 1).Select
@@ -177,7 +181,7 @@ Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndic
         subtotalIndices(i) = colIdx
     Next i
     
-    ' Define the main data range
+    ' Define the main data range, including the header row
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     
@@ -186,7 +190,7 @@ Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndic
         Exit Function
     End If
     
-    Set dataRange = ws.Range(ws.Cells(headerRow + 1, 1), ws.Cells(lastRow, lastCol))
+    Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
     PrepareSheetAndGetIndices = True
 End Function
 
@@ -200,7 +204,7 @@ Private Sub ApplySorting(ws As Worksheet, dataRangeWithHeaders As Range, hierarc
         For i = 1 To UBound(hierarchyIndices)
             .SortFields.Add Key:=ws.Columns(hierarchyIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending
         Next i
-        .SetRange ws.Range(ws.Cells(headerRow, 1), dataRangeWithHeaders.Cells(dataRangeWithHeaders.Rows.Count, dataRangeWithHeaders.Columns.Count))
+        .SetRange dataRangeWithHeaders
         .Header = xlYes
         .MatchCase = False
         .Orientation = xlTopToBottom
@@ -210,25 +214,29 @@ End Sub
 
 Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hierarchyIndices() As Long, subtotalIndices() As Long)
     ' This is the definitive manual engine. It processes level-by-level from the
-    ' most detailed to the highest, inserting subtotal rows and creating outline groups.
+    ' most detailed to the highest, inserting subtotal rows and setting outline levels.
     
     Dim lastDataRow As Long, r As Long, level As Long, parentLevel As Long, sc As Long
     Dim groupStartRowInLevel As Long
     Dim insertAtRow As Long, formulaStartRow As Long, formulaEndRow As Long
     Dim totalLabel As String
-    Dim groupRange As Range
 
     ' Loop through each hierarchy level from the most detailed to the highest (e.g., Level 3, then 2, then 1)
     For level = UBound(hierarchyIndices) To 1 Step -1
         Application.StatusBar = "Processing Level " & (UBound(hierarchyIndices) - level + 1) & " of " & UBound(hierarchyIndices) & "..."
         
         lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
-        groupStartRowInLevel = lastDataRow ' Initialize for the first group from the bottom
+        
+        ' Initialize groupStartRow to the last actual data row on the sheet
+        groupStartRowInLevel = lastDataRow
+        While InStr(1, ws.Cells(groupStartRowInLevel, subtotalIndices(1)).Formula, "SUBTOTAL") > 0 And groupStartRowInLevel > headerRowNum
+            groupStartRowInLevel = groupStartRowInLevel - 1
+        Wend
 
         ' Loop backwards through the data rows for the current level
         For r = lastDataRow To headerRowNum + 1 Step -1
             
-            ' Skip any rows that are already subtotal rows from a previous, more detailed level
+            ' Skip any rows that are already subtotal rows
             If InStr(1, ws.Cells(r, subtotalIndices(1)).Formula, "SUBTOTAL") > 0 Then GoTo NextIteration
             
             ' Find the first "real" data row above the current row 'r' to compare against
@@ -263,26 +271,18 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
                 ws.Cells(insertAtRow, hierarchyIndices(level)).Value = totalLabel
                 ws.Rows(insertAtRow).Font.Bold = True ' Apply desired format
                 
+                ' --- 3. SET OUTLINE LEVEL FOR THE NEW SUBTOTAL ROW ---
+                ws.Rows(insertAtRow).OutlineLevel = level
+                
                 ' Copy parent values to the new total row for context
                 For parentLevel = 1 To level - 1
                     ws.Cells(insertAtRow, hierarchyIndices(parentLevel)).Value = ws.Cells(formulaStartRow, hierarchyIndices(parentLevel)).Value
                 Next parentLevel
                 
-                ' --- 3. WRITE SUBTOTAL FORMULAS ---
+                ' --- 4. WRITE SUBTOTAL FORMULAS ---
                 For sc = 1 To UBound(subtotalIndices)
                     ws.Cells(insertAtRow, subtotalIndices(sc)).Formula = BuildSubtotalFormula(ws, subtotalIndices(sc), formulaStartRow, formulaEndRow)
                 Next sc
-                
-                ' --- 4. CREATE OUTLINE GROUP ---
-                ' CRITICAL FIX: Only group if the range contains more than one row.
-                If formulaEndRow > formulaStartRow Then
-                    If summaryBelow Then
-                        Set groupRange = ws.Rows(formulaStartRow & ":" & formulaEndRow)
-                    Else ' Summary Above
-                        Set groupRange = ws.Rows(insertAtRow + 1 & ":" & formulaEndRow + 1)
-                    End If
-                    groupRange.Group
-                End If
                 
                 ' --- 5. RESET FOR NEXT GROUP ---
                 groupStartRowInLevel = prevDataRow
