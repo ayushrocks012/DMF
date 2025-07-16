@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (Definitive Manual Engine)
+'== REVISED: July 16, 2025 (Definitive Manual Engine v2)
 '====================================================================================
 Option Explicit
 
@@ -96,6 +96,7 @@ End Sub
 ' --- Engine Sub-Procedures ---
 
 Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndices() As Long, ByRef subtotalIndices() As Long, ByRef dataRange As Range) As Boolean
+    ws.Cells.ClearOutline
     ws.Cells.RemoveSubtotal ' Clear any previous attempts
     Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
     ReDim hierarchyIndices(1 To hierarchyColNames.Count)
@@ -134,15 +135,15 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== CREATE MANUAL SUBTOTALS (Definitive Manual Engine)
-'== This new engine completely replaces the buggy native .Subtotal method.
-'== It manually inserts rows, writes labels, builds formulas, and creates outlines.
+'== CREATE MANUAL SUBTOTALS (Definitive Manual Engine v2)
+'== This new engine uses robust, safe methods for all operations.
 '==============================================================================
 Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hierarchyIndices() As Long, subtotalIndices() As Long)
     Dim lastDataRow As Long, r As Long, level As Long, parentLevel As Long, sc As Long
     Dim groupStartRow As Long
     Dim insertAt As Long, formulaStartRow As Long, formulaEndRow As Long
-    Dim totalLabel As String, colLetter As String
+    Dim totalLabel As String, colLetter As String, formulaRange As String
+    Dim groupRange As Range
 
     lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     groupStartRow = lastDataRow ' Initialize for the first group from the bottom
@@ -151,7 +152,8 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
     For r = lastDataRow To headerRowNum + 1 Step -1
         For level = UBound(hierarchyIndices) To 1 Step -1
             ' Check if the group has changed at this level, or if it's the very first data row
-            If ws.Cells(r, hierarchyIndices(level)).Value <> ws.Cells(r - 1, hierarchyIndices(level)).Value Or r = headerRowNum + 1 Then
+            ' Using CStr for safe comparison to avoid errors on non-text values
+            If CStr(ws.Cells(r, hierarchyIndices(level)).Value) <> CStr(ws.Cells(r - 1, hierarchyIndices(level)).Value) Or r = headerRowNum + 1 Then
                 
                 formulaStartRow = r
                 formulaEndRow = groupStartRow
@@ -172,14 +174,26 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
                     ws.Cells(insertAt, hierarchyIndices(parentLevel)).Value = ws.Cells(formulaStartRow, hierarchyIndices(parentLevel)).Value
                 Next parentLevel
                 
-                ' Write the SUBTOTAL formulas
+                ' Write the SUBTOTAL formulas (with corrected logic)
                 For sc = 1 To UBound(subtotalIndices)
                     colLetter = Split(ws.Cells(1, subtotalIndices(sc)).Address, "$")(1)
-                    ws.Cells(insertAt, subtotalIndices(sc)).Formula = "=SUBTOTAL(9," & colLetter & formulaStartRow + 1 & ":" & colLetter & formulaEndRow + 1 & ")"
+                    If summaryBelow Then
+                        ' When inserting below, the original range does not shift
+                        formulaRange = colLetter & formulaStartRow & ":" & colLetter & formulaEndRow
+                    Else
+                        ' When inserting above, the original range shifts down by 1
+                        formulaRange = colLetter & formulaStartRow + 1 & ":" & colLetter & formulaEndRow + 1
+                    End If
+                    ws.Cells(insertAt, subtotalIndices(sc)).Formula = "=SUBTOTAL(9," & formulaRange & ")"
                 Next sc
                 
-                ' Set the outline level for the new total row
-                ws.Rows(insertAt).OutlineLevel = level
+                ' Create the outline group using the robust .Group method
+                If summaryBelow Then
+                    Set groupRange = ws.Rows(formulaStartRow & ":" & formulaEndRow)
+                Else ' Summary Above
+                    Set groupRange = ws.Rows(insertAt + 1 & ":" & formulaEndRow + 1)
+                End If
+                groupRange.Group
                 
                 ' Update the groupStartRow for the next group
                 groupStartRow = r - 1
@@ -205,14 +219,6 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
             ws.Cells(insertAt, subtotalIndices(sc)).Formula = "=SUBTOTAL(9," & colLetter & headerRowNum + 2 & ":" & lastDataRow + 1 & ")"
         End If
     Next sc
-    
-    ' --- Apply Outline Levels to Data Rows ---
-    lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
-    For r = headerRowNum + 1 To lastDataRow
-        If ws.Cells(r, hierarchyIndices(1)).Value <> "Grand Total" And InStr(1, ws.Cells(r, subtotalIndices(1)).Formula, "SUBTOTAL") = 0 Then
-            ws.Rows(r).OutlineLevel = UBound(hierarchyIndices) + 1
-        End If
-    Next r
 End Sub
 
 Private Sub RestoreExcelSettings(ByVal cancelled As Boolean)
