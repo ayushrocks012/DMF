@@ -234,7 +234,7 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
                     rangeEndRow = r - 1
                     rangeStartRow = headerRow + 1 ' Default for the very first group
                     For searchRow = r - 1 To headerRow + 1 Step -1
-                        If InStr(1, ws.Cells(searchRow, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 Then
+                        If InStr(1, ws.Cells(searchRow, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 And ws.Rows(searchRow).OutlineLevel <= ws.Rows(r).OutlineLevel Then
                             rangeStartRow = searchRow + 1
                             Exit For
                         End If
@@ -242,8 +242,9 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
                 Else ' Totals Above
                     rangeStartRow = r + 1
                     rangeEndRow = lastRow ' Default for the very last group
-                    For searchRow = r + 1 To lastRow Step -1
-                        If InStr(1, ws.Cells(searchRow, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 Then
+                    For searchRow = r + 1 To lastRow + 1 Step 1 ' Corrected loop
+                        If searchRow > ws.Rows.Count Then Exit For ' Safety
+                        If InStr(1, ws.Cells(searchRow, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 And ws.Rows(searchRow).OutlineLevel <= ws.Rows(r).OutlineLevel Then
                             rangeEndRow = searchRow - 1
                             Exit For
                         End If
