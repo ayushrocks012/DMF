@@ -1,7 +1,6 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== Right-click your UserForm in the VBE Project Explorer and select "View Code".
-'== Paste this entire section into that code window.
+'== This code does not need to be changed.
 '====================================================================================
 
 Option Explicit
@@ -160,7 +159,7 @@ End Sub
 
 '====================================================================================
 '== CODE FOR A NEW MODULE
-'== This is the "In-Place" engine that modifies the current sheet.
+'== This is the new "In-Place" engine.
 '====================================================================================
 
 Option Explicit
@@ -204,19 +203,38 @@ Sub RunInPlaceSubtotal()
     Application.Calculation = xlCalculationManual
     Application.StatusBar = "Preparing to process..."
     
-    Dim ws As Worksheet
+    Dim wsSource As Worksheet, wsOutput As Worksheet
     Dim hierarchyIndices() As Long, subtotalIndices() As Long
     Dim dataRange As Range
     
-    Set ws = ThisWorkbook.Worksheets(targetWorksheetName)
+    Set wsSource = ThisWorkbook.Worksheets(targetWorksheetName)
     
-    ' --- 1. PREPARE SHEET AND GET INDICES ---
-    If Not PrepareSheetAndGetIndices(ws, hierarchyIndices, subtotalIndices, dataRange) Then GoTo Cleanup
+    ' --- NEW: Create a copy of the sheet to work on ---
+    Application.StatusBar = "Creating a copy of the worksheet..."
+    wsSource.Copy After:=wsSource
+    Set wsOutput = ActiveSheet ' The new copy becomes the active sheet
+    
+    ' Rename the new sheet to avoid conflicts
+    Dim copyName As String, i As Integer
+    i = 1
+    On Error Resume Next
+    Do
+        copyName = wsSource.Name & " (Subtotals " & i & ")"
+        If ThisWorkbook.Worksheets(copyName) Is Nothing Then
+            wsOutput.Name = copyName
+            Exit Do
+        End If
+        i = i + 1
+    Loop
+    On Error GoTo ErrorHandler
+    
+    ' --- 1. PREPARE SHEET AND GET INDICES (on the new sheet) ---
+    If Not PrepareSheetAndGetIndices(wsOutput, hierarchyIndices, subtotalIndices, dataRange) Then GoTo Cleanup
     
     ' --- 2. SORT DATA (IF REQUESTED) ---
     If Not skipSort Then
         Application.StatusBar = "Sorting data..."
-        SortDataInPlace ws, dataRange, hierarchyIndices
+        SortDataInPlace wsOutput, dataRange, hierarchyIndices
     End If
     
     ' --- 3. APPLY NATIVE SUBTOTALS ---
@@ -225,9 +243,9 @@ Sub RunInPlaceSubtotal()
     
     ' --- 4. POST-PROCESS TO FIX LABELS ---
     Application.StatusBar = "Formatting report and adjusting labels..."
-    PostProcessSubtotals ws, dataRange, hierarchyIndices
+    PostProcessSubtotals wsOutput, dataRange, hierarchyIndices
     
-    ws.Columns.AutoFit
+    wsOutput.Columns.AutoFit
     Application.StatusBar = "Process complete!"
 
 Cleanup:
