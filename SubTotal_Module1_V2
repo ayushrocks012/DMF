@@ -1,0 +1,245 @@
+'====================================================================================
+'== CODE FOR A NEW MODULE
+'== This is the "In-Place" engine that works on a copy of the sheet.
+'== REVISED: July 16, 2025
+'====================================================================================
+Option Explicit
+
+' --- Global variables to hold settings from the form ---
+Public targetWorksheetName As String
+Public hierarchyColNames As Collection
+Public subtotalColNames As Collection
+Public summaryBelow As Boolean
+Public headerRow As Long
+Public skipSort As Boolean
+
+' --- Main entry points ---
+Sub ShowSubtotalForm()
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+    Dim headerRowInput As String
+    Do
+        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "1")
+        If headerRowInput = "" Then Exit Sub ' User cancelled
+        If IsNumeric(headerRowInput) And CLng(headerRowInput) > 0 Then
+            headerRow = CLng(headerRowInput)
+            Exit Do
+        Else
+            MsgBox "Invalid input. Please enter a positive number for the row.", vbExclamation
+        End If
+    Loop
+    frmMultiSubtotal.Show
+End Sub
+
+Sub CancelAndCleanup()
+    Call RestoreExcelSettings(True)
+End Sub
+
+' --- IN-PLACE ENGINE CONTROLLER ---
+Sub RunInPlaceSubtotal()
+    On Error GoTo ErrorHandler
+    
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.StatusBar = "Preparing to process..."
+    
+    Dim wsSource As Worksheet, wsOutput As Worksheet
+    Dim hierarchyIndices() As Long, subtotalIndices() As Long
+    Dim dataRange As Range
+    
+    Set wsSource = ThisWorkbook.Worksheets(targetWorksheetName)
+    
+    ' --- Create a copy of the sheet to work on ---
+    Application.StatusBar = "Creating a copy of the worksheet..."
+    wsSource.Copy After:=wsSource
+    Set wsOutput = ActiveSheet ' The new copy becomes the active sheet
+    
+    ' Rename the new sheet to avoid conflicts
+    Dim copyName As String, i As Integer
+    i = 1
+    On Error Resume Next
+    Do
+        copyName = wsSource.Name & " (Subtotals " & i & ")"
+        If ThisWorkbook.Worksheets(copyName) Is Nothing Then
+            wsOutput.Name = copyName
+            Exit Do
+        End If
+        i = i + 1
+    Loop
+    On Error GoTo ErrorHandler
+    
+    ' --- 1. PREPARE SHEET AND GET INDICES (on the new sheet) ---
+    If Not PrepareSheetAndGetIndices(wsOutput, hierarchyIndices, subtotalIndices, dataRange) Then GoTo Cleanup
+    
+    ' --- 2. SORT DATA (IF REQUESTED) ---
+    If Not skipSort Then
+        Application.StatusBar = "Sorting data..."
+        SortDataInPlace wsOutput, dataRange, hierarchyIndices
+    End If
+    
+    ' --- 3. APPLY NATIVE SUBTOTALS ---
+    Application.StatusBar = "Inserting subtotal rows..."
+    ApplyNativeSubtotals dataRange, hierarchyIndices, subtotalIndices
+    
+    ' --- 4. POST-PROCESS TO FIX LABELS ---
+    Application.StatusBar = "Formatting report and adjusting labels..."
+    PostProcessSubtotals wsOutput, dataRange, hierarchyIndices
+    
+    wsOutput.Columns.AutoFit
+    Application.StatusBar = "Process complete!"
+    
+Cleanup:
+    Call RestoreExcelSettings(False)
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Subtotal Tool Error"
+    Resume Cleanup
+End Sub
+
+' --- In-Place Engine Sub-Procedures ---
+
+Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndices() As Long, ByRef subtotalIndices() As Long, ByRef dataRange As Range) As Boolean
+    Application.StatusBar = "Validating selections..."
+    
+    ' Clear any previous subtotals and outlines first
+    ws.Cells.RemoveSubtotal
+    
+    Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
+    ReDim hierarchyIndices(1 To hierarchyColNames.Count)
+    ReDim subtotalIndices(1 To subtotalColNames.Count)
+    
+    For i = 1 To hierarchyColNames.Count
+        colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
+        If colIdx = 0 Then MsgBox "Could not find HIERARCHY column '" & hierarchyColNames(i) & "'", vbCritical: Exit Function
+        hierarchyIndices(i) = colIdx
+    Next i
+    
+    For i = 1 To subtotalColNames.Count
+        colIdx = GetColumnIndexByText(subtotalColNames(i), ws, headerRow)
+        If colIdx = 0 Then MsgBox "Could not find SUBTOTAL column '" & subtotalColNames(i) & "'", vbCritical: Exit Function
+        subtotalIndices(i) = colIdx
+    Next i
+    
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
+    If lastRow <= headerRow Then MsgBox "No data found below header row.", vbInformation: Exit Function
+    
+    Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
+    
+    PrepareSheetAndGetIndices = True
+End Function
+
+Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
+    Dim i As Long
+    With ws.Sort
+        .SortFields.Clear
+        For i = 1 To UBound(hierarchyIndices)
+            .SortFields.Add Key:=ws.Columns(hierarchyIndices(i)), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        Next i
+        .SetRange dataRange
+        .Header = xlYes
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+End Sub
+
+'==============================================================================
+'== REVISED SUBROUTINE
+'== This version applies subtotals from the most-nested level upwards,
+'== which is a more robust method for creating multi-level reports.
+'==============================================================================
+Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
+    ' Apply subtotals from the most nested level to the highest level.
+    ' This ensures correct grouping and labeling by Excel's native engine.
+    
+    Dim i As Long
+    
+    ' Loop from the most-nested level (the end of the array) up to the highest level (the start).
+    ' We use Replace:=False for all calls because we are layering the totals.
+    ' The initial state is a clean sheet (from PrepareSheetAndGetIndices), so we don't
+    ' need a specific "Replace:=True" call. The Grand Total is created by the final,
+    ' highest-level subtotal call.
+    For i = UBound(hierarchyIndices) To 1 Step -1
+        dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
+                           Function:=xlSum, _
+                           TotalList:=subtotalIndices, _
+                           Replace:=False, _
+                           PageBreaks:=False, _
+                           SummaryBelowData:=summaryBelow
+    Next i
+End Sub
+
+Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
+    ' Loops through the generated report to populate parent hierarchy values on total rows.
+    Dim lastRow As Long, r As Long, level As Long
+    Dim totalLevel As Long, sourceRow As Long, totalLabel As String
+    
+    ' After subtotaling, the data range expands. We need to find the new last row.
+    lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
+    
+    ' Loop from the bottom up to fix labels
+    For r = lastRow To dataRange.Row + 1 Step -1
+        totalLevel = 0
+        
+        ' Check if this row is a total row by finding which hierarchy column has a " Total" label
+        ' We must scan from most detailed to least detailed to correctly identify the level
+        For level = UBound(hierarchyIndices) To 1 Step -1
+            If InStr(1, CStr(ws.Cells(r, hierarchyIndices(level)).Value), " Total", vbTextCompare) > 0 Then
+                totalLevel = level
+                Exit For
+            End If
+        Next level
+        
+        ' If it's a total row (but not the Grand Total)
+        If totalLevel > 0 And Not InStr(1, CStr(ws.Cells(r, hierarchyIndices(1)).Value), "Grand Total", vbTextCompare) > 0 Then
+            
+            ' Store the correct label and clear out all hierarchy columns for this row
+            totalLabel = ws.Cells(r, hierarchyIndices(totalLevel)).Value
+            ws.Range(ws.Cells(r, hierarchyIndices(1)), ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices)))).ClearContents
+            
+            ' Write the correct label back into its proper column
+            ws.Cells(r, hierarchyIndices(totalLevel)).Value = totalLabel
+            
+            ' Determine the source row for parent values based on subtotal position
+            If summaryBelow Then
+                sourceRow = r - 1 ' The last data row of the group is immediately above
+            Else
+                sourceRow = r + 1 ' The first data row of the group is immediately below
+            End If
+            
+            ' Ensure sourceRow is within a valid range
+            If sourceRow > headerRow And sourceRow <= lastRow + 1 Then
+                ' Populate parent hierarchy values for context
+                Dim parentLevel As Long
+                For parentLevel = 1 To totalLevel - 1
+                    ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(sourceRow, hierarchyIndices(parentLevel)).Value
+                Next parentLevel
+            End If
+        End If
+    Next r
+End Sub
+
+Private Sub RestoreExcelSettings(ByVal cancelled As Boolean)
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    If cancelled Then Application.StatusBar = "Operation cancelled." Else Application.StatusBar = False
+    Set hierarchyColNames = Nothing
+    Set subtotalColNames = Nothing
+End Sub
+
+Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
+    Dim findRange As Range
+    ' Find the column header in the specified row
+    Set findRange = ws.Rows(headerRowNum).Find(What:=colName, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    
+    If Not findRange Is Nothing Then
+        GetColumnIndexByText = findRange.Column
+    Else
+        GetColumnIndexByText = 0 ' Return 0 if not found
+    End If
+End Function
