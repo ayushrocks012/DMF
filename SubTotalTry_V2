@@ -178,7 +178,7 @@ Sub ShowSubtotalForm()
     Set subtotalColNames = Nothing
     Dim headerRowInput As String
     Do
-        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "2")
+        headerRowInput = InputBox("Please enter the header row number:", "Specify Header Row", "1")
         If headerRowInput = "" Then Exit Sub
         If IsNumeric(headerRowInput) And CLng(headerRowInput) > 0 Then
             headerRow = CLng(headerRowInput)
@@ -307,20 +307,20 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' Applies the standard Excel subtotal command in a loop for robustness.
+    ' --- FIX: Apply subtotals from most detailed to least detailed for consistent layout. ---
     
-    ' Apply the highest level of the hierarchy first. This creates the main structure and the Grand Total.
-    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
+    ' Apply the most detailed level first, this replaces any existing subtotals.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(UBound(hierarchyIndices)), _
                        Function:=xlSum, _
                        TotalList:=subtotalIndices, _
                        Replace:=True, _
                        PageBreaks:=False, _
                        SummaryBelowData:=summaryBelow
                        
-    ' Now, loop through the remaining hierarchy levels to add the nested subtotals.
+    ' Now, loop backwards through the remaining hierarchy levels to add nested totals.
     If UBound(hierarchyIndices) > 1 Then
         Dim i As Long
-        For i = 2 To UBound(hierarchyIndices)
+        For i = UBound(hierarchyIndices) - 1 To 1 Step -1
             dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
                                Function:=xlSum, _
                                TotalList:=subtotalIndices, _
@@ -329,12 +329,22 @@ Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long,
                                SummaryBelowData:=summaryBelow
         Next i
     End If
+    
+    ' Finally, add the Grand Total by subtotaling on the highest-level group again.
+    ' This is a trick to ensure the Grand Total appears correctly with the other totals.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
+                       Function:=xlSum, _
+                       TotalList:=subtotalIndices, _
+                       Replace:=False, _
+                       PageBreaks:=False, _
+                       SummaryBelowData:=summaryBelow
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
+    ' --- NEW ROBUST LOGIC ---
     ' Loops through the generated report to populate parent hierarchy values on total rows.
     Dim lastRow As Long, r As Long, level As Long
-    Dim totalLevel As Long
+    Dim totalLevel As Long, sourceRow As Long
     
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     
@@ -349,15 +359,24 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
             End If
         Next level
         
-        ' If it's a total row (and not the Grand Total which is handled differently)
+        ' If it's a total row (and not the Grand Total)
         If totalLevel > 0 And Not InStr(1, CStr(ws.Cells(r, hierarchyIndices(1)).Value), "Grand Total", vbTextCompare) > 0 Then
-            ' Populate parent hierarchy values for context
-            Dim parentLevel As Long
-            For parentLevel = 1 To totalLevel - 1
-                ' Copy the value from the data row immediately above the total row.
-                ' This is safe because the row above a subtotal is always part of that group.
-                ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(r - 1, hierarchyIndices(parentLevel)).Value
-            Next parentLevel
+            
+            ' Determine the source row for parent values based on subtotal position
+            If summaryBelow Then
+                sourceRow = r - 1 ' The last data row of the group is immediately above
+            Else
+                sourceRow = r + 1 ' The first data row of the group is immediately below
+            End If
+            
+            ' Ensure sourceRow is within a valid range
+            If sourceRow > 0 And sourceRow <= lastRow + 1 Then
+                ' Populate parent hierarchy values for context
+                Dim parentLevel As Long
+                For parentLevel = 1 To totalLevel - 1
+                    ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(sourceRow, hierarchyIndices(parentLevel)).Value
+                Next parentLevel
+            End If
         End If
     Next r
 End Sub
