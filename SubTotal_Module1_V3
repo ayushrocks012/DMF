@@ -2,7 +2,7 @@
 '== CODE FOR A NEW MODULE (e.g., Module1)
 '== DESCRIPTION: This is the "In-Place" engine that works on a copy of the sheet.
 '==              It contains the core logic for the subtotal creation process.
-'== VERSION:     4.4 (Definitive Logic and Formatting Fix)
+'== VERSION:     4.5 (Final Logic Fix)
 '====================================================================================
 Option Explicit
 
@@ -309,9 +309,19 @@ Private Sub InsertGrandTotalRow(ws As Worksheet, ByVal headerRowNum As Long, hie
     ws.Cells(insertAtRow, hierarchyIndices(1)).Value = GRAND_TOTAL_LABEL
     ws.Rows(insertAtRow).Font.Bold = True
     
-    ' Add the formulas
+    ' Add the formulas for the Grand Total
     For sc = 1 To UBound(subtotalIndices)
-        ws.Cells(insertAtRow, subtotalIndices(sc)).Formula = BuildSubtotalFormula(ws, subtotalIndices(sc), headerRowNum + 1, lastDataRow)
+        Dim colLetter As String
+        colLetter = Split(ws.Cells(1, subtotalIndices(sc)).Address, "$")(1)
+        Dim formulaRange As String
+        If summaryBelow Then
+            ' Grand total sums from the first data row to the last row before it was inserted
+            formulaRange = colLetter & headerRowNum + 1 & ":" & lastDataRow
+        Else
+            ' Grand total sums from the row after it to the new last row
+            formulaRange = colLetter & headerRowNum + 2 & ":" & lastDataRow + 1
+        End If
+        ws.Cells(insertAtRow, subtotalIndices(sc)).Formula = "=SUBTOTAL(" & SUBTOTAL_FUNCTION_SUM & "," & formulaRange & ")"
     Next sc
 End Sub
 
@@ -336,21 +346,18 @@ End Function
 
 Private Function BuildSubtotalFormula(ws As Worksheet, ByVal colIdx As Long, ByVal startRow As Long, ByVal endRow As Long) As String
     ' Constructs a =SUBTOTAL(9, A1:A10) style formula string.
+    ' This has been corrected to handle "Summary Above" properly.
     Dim colLetter As String
     colLetter = Split(ws.Cells(1, colIdx).Address, "$")(1)
     
     Dim formulaRange As String
     If summaryBelow Then
+        ' For summaries below, the range is simply the data rows in the group.
         formulaRange = colLetter & startRow & ":" & colLetter & endRow
     Else
-        ' When summary is above, the data rows are shifted down by 1 for each inserted row
-        Dim rowsInsertedAboveStart As Long
-        rowsInsertedAboveStart = ws.Range(ws.Rows(1), ws.Rows(startRow - 1)).SpecialCells(xlCellTypeFormulas, xlNumbers).Count / UBound(subtotalIndices)
-        
-        Dim rowsInsertedAboveEnd As Long
-        rowsInsertedAboveEnd = ws.Range(ws.Rows(1), ws.Rows(endRow - 1)).SpecialCells(xlCellTypeFormulas, xlNumbers).Count / UBound(subtotalIndices)
-        
-        formulaRange = colLetter & startRow & ":" & colLetter & endRow
+        ' For summaries above, the subtotal row is inserted *at* the startRow,
+        ' pushing all data rows down by one. The formula must reference the new locations.
+        formulaRange = colLetter & startRow + 1 & ":" & colLetter & endRow + 1
     End If
     
     BuildSubtotalFormula = "=SUBTOTAL(" & SUBTOTAL_FUNCTION_SUM & "," & formulaRange & ")"
