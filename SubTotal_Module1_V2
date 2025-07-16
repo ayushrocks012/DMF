@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (v3)
+'== REVISED: July 16, 2025 (v4 - Final)
 '====================================================================================
 Option Explicit
 
@@ -148,25 +148,16 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== DEFINITIVE SUBROUTINE (v3)
-'== This version uses a SINGLE call to the .Subtotal method, passing all
-'== hierarchy levels at once. This is the correct and most robust method.
+'== DEFINITIVE SUBROUTINE (v4)
+'== This version uses a SINGLE, direct call to the .Subtotal method, passing
+'== the full array of hierarchy columns. This is the correct and robust method.
 '==============================================================================
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' The GroupBy parameter can accept an array of column indices to create
-    ' a multi-level subtotal in one operation. This is the correct approach.
-    
-    dataRange.Subtotal GroupBy:=1, _
-                       Function:=xlSum, _
-                       TotalList:=subtotalIndices, _
-                       Replace:=True, _
-                       PageBreaks:=False, _
-                       SummaryBelowData:=summaryBelow
-                       
-    ' After the initial structure is created, we must remove the subtotals
-    ' and then re-apply them with the full hierarchy. This seems counter-intuitive
-    ' but it forces Excel to correctly build the outline levels.
-    dataRange.RemoveSubtotal
+    ' The GroupBy parameter accepts an array of column indices to create
+    ' a multi-level subtotal in one operation.
+    ' Important: The indices in the array must be relative to the dataRange.
+    ' Since our dataRange starts in column 1, the absolute worksheet column
+    ' indices stored in hierarchyIndices are correct.
     
     dataRange.Subtotal GroupBy:=hierarchyIndices, _
                        Function:=xlSum, _
@@ -174,7 +165,6 @@ Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long,
                        Replace:=True, _
                        PageBreaks:=False, _
                        SummaryBelowData:=summaryBelow
-
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
