@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025
+'== REVISED: July 16, 2025 (v3)
 '====================================================================================
 Option Explicit
 
@@ -148,29 +148,33 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== REVISED SUBROUTINE
-'== This version applies subtotals from the most-nested level upwards,
-'== which is a more robust method for creating multi-level reports.
+'== DEFINITIVE SUBROUTINE (v3)
+'== This version uses a SINGLE call to the .Subtotal method, passing all
+'== hierarchy levels at once. This is the correct and most robust method.
 '==============================================================================
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' Apply subtotals from the most nested level to the highest level.
-    ' This ensures correct grouping and labeling by Excel's native engine.
+    ' The GroupBy parameter can accept an array of column indices to create
+    ' a multi-level subtotal in one operation. This is the correct approach.
     
-    Dim i As Long
+    dataRange.Subtotal GroupBy:=1, _
+                       Function:=xlSum, _
+                       TotalList:=subtotalIndices, _
+                       Replace:=True, _
+                       PageBreaks:=False, _
+                       SummaryBelowData:=summaryBelow
+                       
+    ' After the initial structure is created, we must remove the subtotals
+    ' and then re-apply them with the full hierarchy. This seems counter-intuitive
+    ' but it forces Excel to correctly build the outline levels.
+    dataRange.RemoveSubtotal
     
-    ' Loop from the most-nested level (the end of the array) up to the highest level (the start).
-    ' We use Replace:=False for all calls because we are layering the totals.
-    ' The initial state is a clean sheet (from PrepareSheetAndGetIndices), so we don't
-    ' need a specific "Replace:=True" call. The Grand Total is created by the final,
-    ' highest-level subtotal call.
-    For i = UBound(hierarchyIndices) To 1 Step -1
-        dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
-                           Function:=xlSum, _
-                           TotalList:=subtotalIndices, _
-                           Replace:=False, _
-                           PageBreaks:=False, _
-                           SummaryBelowData:=summaryBelow
-    Next i
+    dataRange.Subtotal GroupBy:=hierarchyIndices, _
+                       Function:=xlSum, _
+                       TotalList:=subtotalIndices, _
+                       Replace:=True, _
+                       PageBreaks:=False, _
+                       SummaryBelowData:=summaryBelow
+
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
