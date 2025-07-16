@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (Corrected "Subtotals Below" Logic)
+'== REVISED: July 16, 2025 (Definitive "Bottom-Up" Implementation)
 '====================================================================================
 Option Explicit
 
@@ -140,22 +140,25 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== APPLY SUBTOTALS (Reliable "Top-Down" Logic)
-'== This version correctly inserts all necessary rows and creates the outline.
-'== The incorrect formulas it generates will be completely replaced later.
+'== APPLY SUBTOTALS (Definitive "Bottom-Up" Logic)
+'== This version applies subtotals from the most detailed level upwards,
+'== which creates a stable outline structure for both Above and Below cases.
 '==============================================================================
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' Apply subtotals from highest level to lowest.
-    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
+    Dim i As Long
+    
+    ' Apply the most detailed level first, with Replace:=True to clear any prior state.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(UBound(hierarchyIndices)), _
                        Function:=xlSum, _
                        TotalList:=subtotalIndices, _
                        Replace:=True, _
                        PageBreaks:=False, _
                        SummaryBelowData:=summaryBelow
                        
+    ' Now, loop through the remaining hierarchy levels from the second-most-detailed
+    ' up to the highest level, using Replace:=False to layer them correctly.
     If UBound(hierarchyIndices) > 1 Then
-        Dim i As Long
-        For i = 2 To UBound(hierarchyIndices)
+        For i = UBound(hierarchyIndices) - 1 To 1 Step -1
             dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
                                Function:=xlSum, _
                                TotalList:=subtotalIndices, _
@@ -190,13 +193,21 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
         ' 1. Identify if it's a total row by looking for the SUBTOTAL formula.
         If InStr(1, ws.Cells(r, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 Then
             
-            ' 2. Get its hierarchy level from its OutlineLevel.
+            ' 2. Handle Grand Total first and exit the iteration.
+            ' The Grand Total is the only total row with OutlineLevel = 1.
+            If ws.Rows(r).OutlineLevel = 1 Then
+                ws.Range(ws.Cells(r, hierarchyIndices(2)), ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices)))).ClearContents
+                ws.Cells(r, hierarchyIndices(1)).Value = "Grand Total"
+                GoTo NextIteration
+            End If
+
+            ' 3. It's a subtotal row. Get its hierarchy level from its OutlineLevel.
             hierarchyLevel = ws.Rows(r).OutlineLevel - 1
             
-            ' 3. Skip Grand Total (level 0) and any invalid levels
+            ' 4. Skip any invalid levels that might arise
             If hierarchyLevel < 1 Or hierarchyLevel > UBound(hierarchyIndices) Then GoTo NextIteration
             
-            ' 4. Find the correct source data row for context (for labels).
+            ' 5. Find the correct source data row for context (for labels).
             sourceRow = 0
             searchRow = r
             Do
@@ -209,7 +220,7 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
                 End If
             Loop
             
-            ' 5. If we found a source row, fix labels and rebuild formulas.
+            ' 6. If we found a source row, fix labels and rebuild formulas.
             If sourceRow > 0 Then
                 ' --- FIX LABELS ---
                 columnForTotal = hierarchyIndices(hierarchyLevel)
@@ -225,33 +236,27 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
                 rangeStartRow = 0
                 rangeEndRow = 0
                 
-                ' *** THIS BLOCK CONTAINS THE FIX FOR "SUBTOTALS BELOW" ***
                 If summaryBelow Then
                     rangeEndRow = r - 1
-                    rangeStartRow = 0 ' Reset before searching
-                    ' Search upwards from the end of the range to find the start.
+                    rangeStartRow = 0 ' Reset
                     For searchRow = rangeEndRow To headerRow + 1 Step -1
-                        ' The start of our range is the row AFTER the first row we find
-                        ' that is a total row of the same or higher level.
                         If ws.Rows(searchRow).OutlineLevel <= ws.Rows(r).OutlineLevel Then
                             rangeStartRow = searchRow + 1
                             Exit For
                         End If
                     Next searchRow
-                    ' If the loop finishes without finding a subtotal (i.e., for the first group),
-                    ' the start row is the one after the header.
                     If rangeStartRow = 0 Then rangeStartRow = headerRow + 1
                 Else ' Totals Above
                     rangeStartRow = r + 1
-                    For searchRow = rangeStartRow + 1 To lastRow + 10 ' Added buffer
+                    rangeEndRow = 0 ' Reset
+                    For searchRow = rangeStartRow To lastRow + 10 ' Added buffer
                         If searchRow > ws.Rows.Count Then Exit For ' Safety
                         If ws.Rows(searchRow).OutlineLevel <= ws.Rows(r).OutlineLevel Then
                             rangeEndRow = searchRow - 1
                             Exit For
                         End If
                     Next searchRow
-                    ' If we hit the end of the sheet without finding another total row
-                    If rangeEndRow = 0 Then rangeEndRow = lastRow
+                    If rangeEndRow = 0 Then rangeEndRow = lastRow ' If it's the last group
                 End If
 
                 ' Apply the new, correct formula to all subtotal columns
@@ -264,16 +269,6 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
             End If
         End If
 NextIteration:
-    Next r
-    
-    ' Handle Grand Total Separately
-    For r = lastRow To headerRow + 1 Step -1
-        If ws.Rows(r).OutlineLevel = 1 And InStr(1, ws.Cells(r, firstSubtotalCol).Formula, "SUBTOTAL", vbTextCompare) > 0 Then
-            ws.Range(ws.Cells(r, hierarchyIndices(2)), ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices)))).ClearContents
-            ws.Cells(r, hierarchyIndices(1)).Value = "Grand Total"
-            ' The Grand Total formula created by Excel is usually correct, so we leave it.
-            Exit For
-        End If
     Next r
 End Sub
 
