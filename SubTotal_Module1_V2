@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (v5)
+'== REVISED: July 16, 2025 (Definitive Version)
 '====================================================================================
 Option Explicit
 
@@ -79,7 +79,7 @@ Sub RunInPlaceSubtotal()
     End If
     
     ' --- 3. APPLY NATIVE SUBTOTALS ---
-    Application.StatusBar = "Inserting subtotal rows..."
+    Application.StatusBar = "Inserting subtotal rows and creating outline..."
     ApplyNativeSubtotals dataRange, hierarchyIndices, subtotalIndices
     
     ' --- 4. POST-PROCESS TO FIX LABELS ---
@@ -102,32 +102,24 @@ End Sub
 
 Private Function PrepareSheetAndGetIndices(ws As Worksheet, ByRef hierarchyIndices() As Long, ByRef subtotalIndices() As Long, ByRef dataRange As Range) As Boolean
     Application.StatusBar = "Validating selections..."
-    
-    ' Clear any previous subtotals and outlines first
     ws.Cells.RemoveSubtotal
-    
     Dim i As Long, colIdx As Long, lastCol As Long, lastRow As Long
     ReDim hierarchyIndices(1 To hierarchyColNames.Count)
     ReDim subtotalIndices(1 To subtotalColNames.Count)
-    
     For i = 1 To hierarchyColNames.Count
         colIdx = GetColumnIndexByText(hierarchyColNames(i), ws, headerRow)
         If colIdx = 0 Then MsgBox "Could not find HIERARCHY column '" & hierarchyColNames(i) & "'", vbCritical: Exit Function
         hierarchyIndices(i) = colIdx
     Next i
-    
     For i = 1 To subtotalColNames.Count
         colIdx = GetColumnIndexByText(subtotalColNames(i), ws, headerRow)
         If colIdx = 0 Then MsgBox "Could not find SUBTOTAL column '" & subtotalColNames(i) & "'", vbCritical: Exit Function
         subtotalIndices(i) = colIdx
     Next i
-    
     lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     If lastRow <= headerRow Then MsgBox "No data found below header row.", vbInformation: Exit Function
-    
     Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(lastRow, lastCol))
-    
     PrepareSheetAndGetIndices = True
 End Function
 
@@ -148,77 +140,102 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== DEFINITIVE SUBROUTINE (v5)
-'== This version explicitly creates a Variant array for the GroupBy parameter
-'== to avoid subtle data type issues with the .Subtotal method.
+'== APPLY SUBTOTALS (Reverted to original, reliable looping method)
+'== This method correctly creates all necessary rows and the outline structure.
+'== The messy labels it creates will be fixed by the new PostProcessSubtotals.
 '==============================================================================
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    Dim hierarchyVariant As Variant
-    Dim i As Long
-    
-    ' The GroupBy parameter can be sensitive to the array's data type.
-    ' To ensure it's interpreted correctly, we explicitly create a
-    ' 1-based Variant array containing the column index numbers.
-    ReDim hierarchyVariant(1 To UBound(hierarchyIndices))
-    For i = 1 To UBound(hierarchyIndices)
-        hierarchyVariant(i) = hierarchyIndices(i)
-    Next i
-
-    dataRange.Subtotal GroupBy:=hierarchyVariant, _
+    ' Apply subtotals from highest level to lowest.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
                        Function:=xlSum, _
                        TotalList:=subtotalIndices, _
                        Replace:=True, _
                        PageBreaks:=False, _
                        SummaryBelowData:=summaryBelow
+                       
+    If UBound(hierarchyIndices) > 1 Then
+        Dim i As Long
+        For i = 2 To UBound(hierarchyIndices)
+            dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
+                               Function:=xlSum, _
+                               TotalList:=subtotalIndices, _
+                               Replace:=False, _
+                               PageBreaks:=False, _
+                               SummaryBelowData:=summaryBelow
+        Next i
+    End If
 End Sub
 
+'==============================================================================
+'== POST-PROCESS SUBTOTALS (New intelligent version)
+'== This version uses the row's OutlineLevel to accurately identify,
+'== clean, and re-label every total row.
+'==============================================================================
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
-    ' Loops through the generated report to populate parent hierarchy values on total rows.
-    Dim lastRow As Long, r As Long, level As Long
-    Dim totalLevel As Long, sourceRow As Long, totalLabel As String
+    Dim lastRow As Long, r As Long, dataRow As Long
+    Dim totalHierarchyLevel As Long, parentLevel As Long
+    Dim totalLabel As String
+    Dim dataRowsOutlineLevel As Long
+    Dim firstHierarchyCol As Long, lastHierarchyCol As Long
+
+    firstHierarchyCol = hierarchyIndices(1)
+    ' Find the right-most column used in the hierarchy to define the clear range
+    lastHierarchyCol = 0
+    For r = 1 To UBound(hierarchyIndices)
+        If hierarchyIndices(r) > lastHierarchyCol Then lastHierarchyCol = hierarchyIndices(r)
+    Next r
+
+    ' Ensure the sheet's outline is usable
+    ws.Outline.ShowLevels RowLevels:=UBound(hierarchyIndices) + 2
+
+    ' The outline level for the actual data rows is the highest level number
+    dataRowsOutlineLevel = UBound(hierarchyIndices) + 1
     
-    ' After subtotaling, the data range expands. We need to find the new last row.
-    lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
-    
+    lastRow = ws.Cells(ws.Rows.Count, firstHierarchyCol).End(xlUp).Row
+
     ' Loop from the bottom up to fix labels
     For r = lastRow To dataRange.Row + 1 Step -1
-        totalLevel = 0
         
-        ' Check if this row is a total row by finding which hierarchy column has a " Total" label
-        ' We must scan from most detailed to least detailed to correctly identify the level
-        For level = UBound(hierarchyIndices) To 1 Step -1
-            If InStr(1, CStr(ws.Cells(r, hierarchyIndices(level)).Value), " Total", vbTextCompare) > 0 Then
-                totalLevel = level
-                Exit For
-            End If
-        Next level
-        
-        ' If it's a total row (but not the Grand Total)
-        If totalLevel > 0 And Not InStr(1, CStr(ws.Cells(r, hierarchyIndices(1)).Value), "Grand Total", vbTextCompare) > 0 Then
+        ' Check if this row is a total row by inspecting its OutlineLevel
+        If ws.Rows(r).OutlineLevel < dataRowsOutlineLevel Then
+            totalHierarchyLevel = ws.Rows(r).OutlineLevel
             
-            ' Store the correct label and clear out all hierarchy columns for this row
-            totalLabel = ws.Cells(r, hierarchyIndices(totalLevel)).Value
-            ws.Range(ws.Cells(r, hierarchyIndices(1)), ws.Cells(r, ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices))).Column)).ClearContents
+            ' Skip the Grand Total row, which is always level 1 and has a special label
+            If InStr(1, CStr(ws.Cells(r, firstHierarchyCol).Value), "Grand Total", vbTextCompare) > 0 Then GoTo NextIteration
             
-            ' Write the correct label back into its proper column
-            ws.Cells(r, hierarchyIndices(totalLevel)).Value = totalLabel
-            
-            ' Determine the source row for parent values based on subtotal position
+            ' Find the relevant data row to copy parent values from.
+            ' It's the first "data" row encountered when moving away from the total row.
             If summaryBelow Then
-                sourceRow = r - 1 ' The last data row of the group is immediately above
+                dataRow = r - 1 ' Look up from the total row
+                Do While ws.Rows(dataRow).OutlineLevel < dataRowsOutlineLevel And dataRow > headerRow
+                    dataRow = dataRow - 1
+                Loop
             Else
-                sourceRow = r + 1 ' The first data row of the group is immediately below
+                dataRow = r + 1 ' Look down from the total row
+                Do While ws.Rows(dataRow).OutlineLevel < dataRowsOutlineLevel And dataRow < lastRow
+                    dataRow = dataRow + 1
+                Loop
             End If
             
-            ' Ensure sourceRow is within a valid range
-            If sourceRow > headerRow And sourceRow <= lastRow + 1 Then
+            ' Proceed only if we found a valid data row
+            If ws.Rows(dataRow).OutlineLevel = dataRowsOutlineLevel Then
+                
+                ' Construct the correct label, e.g., "CORE ORAL Total"
+                totalLabel = ws.Cells(dataRow, hierarchyIndices(totalHierarchyLevel)).Value & " Total"
+                
+                ' Clear out all hierarchy columns for this total row to remove incorrect labels
+                ws.Range(ws.Cells(r, firstHierarchyCol), ws.Cells(r, lastHierarchyCol)).ClearContents
+                
+                ' Write the correct label back into its proper column
+                ws.Cells(r, hierarchyIndices(totalHierarchyLevel)).Value = totalLabel
+                
                 ' Populate parent hierarchy values for context
-                Dim parentLevel As Long
-                For parentLevel = 1 To totalLevel - 1
-                    ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(sourceRow, hierarchyIndices(parentLevel)).Value
+                For parentLevel = 1 To totalHierarchyLevel - 1
+                    ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(dataRow, hierarchyIndices(parentLevel)).Value
                 Next parentLevel
             End If
         End If
+NextIteration:
     Next r
 End Sub
 
@@ -233,12 +250,6 @@ End Sub
 
 Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
     Dim findRange As Range
-    ' Find the column header in the specified row
     Set findRange = ws.Rows(headerRowNum).Find(What:=colName, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
-    
-    If Not findRange Is Nothing Then
-        GetColumnIndexByText = findRange.Column
-    Else
-        GetColumnIndexByText = 0 ' Return 0 if not found
-    End If
+    If Not findRange Is Nothing Then GetColumnIndexByText = findRange.Column Else GetColumnIndexByText = 0
 End Function
