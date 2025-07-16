@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (Definitive Version)
+'== REVISED: July 16, 2025 (Definitive Version 2)
 '====================================================================================
 Option Explicit
 
@@ -167,13 +167,13 @@ Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long,
 End Sub
 
 '==============================================================================
-'== POST-PROCESS SUBTOTALS (New intelligent version)
+'== POST-PROCESS SUBTOTALS (Corrected intelligent version)
 '== This version uses the row's OutlineLevel to accurately identify,
-'== clean, and re-label every total row.
+'== clean, and re-label every total row with the correct indexing.
 '==============================================================================
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
     Dim lastRow As Long, r As Long, dataRow As Long
-    Dim totalHierarchyLevel As Long, parentLevel As Long
+    Dim hierarchyIndexForTotal As Long, parentLevel As Long, columnForTotal As Long
     Dim totalLabel As String
     Dim dataRowsOutlineLevel As Long
     Dim firstHierarchyCol As Long, lastHierarchyCol As Long
@@ -185,7 +185,7 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
         If hierarchyIndices(r) > lastHierarchyCol Then lastHierarchyCol = hierarchyIndices(r)
     Next r
 
-    ' Ensure the sheet's outline is usable
+    ' Ensure the sheet's outline is usable and fully expanded
     ws.Outline.ShowLevels RowLevels:=UBound(hierarchyIndices) + 2
 
     ' The outline level for the actual data rows is the highest level number
@@ -198,13 +198,17 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
         
         ' Check if this row is a total row by inspecting its OutlineLevel
         If ws.Rows(r).OutlineLevel < dataRowsOutlineLevel Then
-            totalHierarchyLevel = ws.Rows(r).OutlineLevel
             
-            ' Skip the Grand Total row, which is always level 1 and has a special label
-            If InStr(1, CStr(ws.Cells(r, firstHierarchyCol).Value), "Grand Total", vbTextCompare) > 0 Then GoTo NextIteration
+            ' *** THE KEY FIX IS HERE ***
+            ' Map the row's OutlineLevel to the correct index in our hierarchy array.
+            ' OutlineLevel for top total is 2, so its index is 2-1=1.
+            ' OutlineLevel for next total is 3, so its index is 3-1=2.
+            hierarchyIndexForTotal = ws.Rows(r).OutlineLevel - 1
+            
+            ' Skip the Grand Total (OutlineLevel 1) and any invalid levels
+            If hierarchyIndexForTotal < 1 Or hierarchyIndexForTotal > UBound(hierarchyIndices) Then GoTo NextIteration
             
             ' Find the relevant data row to copy parent values from.
-            ' It's the first "data" row encountered when moving away from the total row.
             If summaryBelow Then
                 dataRow = r - 1 ' Look up from the total row
                 Do While ws.Rows(dataRow).OutlineLevel < dataRowsOutlineLevel And dataRow > headerRow
@@ -220,17 +224,20 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
             ' Proceed only if we found a valid data row
             If ws.Rows(dataRow).OutlineLevel = dataRowsOutlineLevel Then
                 
-                ' Construct the correct label, e.g., "CORE ORAL Total"
-                totalLabel = ws.Cells(dataRow, hierarchyIndices(totalHierarchyLevel)).Value & " Total"
+                ' Get the actual worksheet column number for this level of total
+                columnForTotal = hierarchyIndices(hierarchyIndexForTotal)
+                
+                ' Construct the correct label from the correct column, e.g., "CORE ORAL Total"
+                totalLabel = ws.Cells(dataRow, columnForTotal).Value & " Total"
                 
                 ' Clear out all hierarchy columns for this total row to remove incorrect labels
                 ws.Range(ws.Cells(r, firstHierarchyCol), ws.Cells(r, lastHierarchyCol)).ClearContents
                 
                 ' Write the correct label back into its proper column
-                ws.Cells(r, hierarchyIndices(totalHierarchyLevel)).Value = totalLabel
+                ws.Cells(r, columnForTotal).Value = totalLabel
                 
                 ' Populate parent hierarchy values for context
-                For parentLevel = 1 To totalHierarchyLevel - 1
+                For parentLevel = 1 To hierarchyIndexForTotal - 1
                     ws.Cells(r, hierarchyIndices(parentLevel)).Value = ws.Cells(dataRow, hierarchyIndices(parentLevel)).Value
                 Next parentLevel
             End If
@@ -251,5 +258,5 @@ End Sub
 Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
     Dim findRange As Range
     Set findRange = ws.Rows(headerRowNum).Find(What:=colName, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
-    If Not findRange Is Nothing Then GetColumnIndexByText = findRange.Column Else GetColumnIndexByText = 0
+    If Not findRange Is Nothing Then GetColumnIndexByText = findRange.Column Else GetColumnIndex_ByText = 0
 End Function
