@@ -1,7 +1,7 @@
 '====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the "In-Place" engine that works on a copy of the sheet.
-'== REVISED: July 16, 2025 (Definitive Manual Engine v2)
+'== REVISED: July 16, 2025 (Definitive Manual Engine v3)
 '====================================================================================
 Option Explicit
 
@@ -135,8 +135,8 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 '==============================================================================
-'== CREATE MANUAL SUBTOTALS (Definitive Manual Engine v2)
-'== This new engine uses robust, safe methods for all operations.
+'== CREATE MANUAL SUBTOTALS (Definitive Manual Engine v3)
+'== This new engine processes level-by-level for maximum stability.
 '==============================================================================
 Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hierarchyIndices() As Long, subtotalIndices() As Long)
     Dim lastDataRow As Long, r As Long, level As Long, parentLevel As Long, sc As Long
@@ -145,14 +145,15 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
     Dim totalLabel As String, colLetter As String, formulaRange As String
     Dim groupRange As Range
 
-    lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
-    groupStartRow = lastDataRow ' Initialize for the first group from the bottom
+    ' --- Loop through each hierarchy level from the most detailed to the highest ---
+    For level = UBound(hierarchyIndices) To 1 Step -1
+        Application.StatusBar = "Processing Level " & level & "..."
+        lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
+        groupStartRow = lastDataRow ' Initialize for the first group from the bottom
 
-    ' --- Loop from the bottom up to insert subtotals ---
-    For r = lastDataRow To headerRowNum + 1 Step -1
-        For level = UBound(hierarchyIndices) To 1 Step -1
+        ' --- Loop through the rows for the current level ---
+        For r = lastDataRow To headerRowNum + 1 Step -1
             ' Check if the group has changed at this level, or if it's the very first data row
-            ' Using CStr for safe comparison to avoid errors on non-text values
             If CStr(ws.Cells(r, hierarchyIndices(level)).Value) <> CStr(ws.Cells(r - 1, hierarchyIndices(level)).Value) Or r = headerRowNum + 1 Then
                 
                 formulaStartRow = r
@@ -174,14 +175,12 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
                     ws.Cells(insertAt, hierarchyIndices(parentLevel)).Value = ws.Cells(formulaStartRow, hierarchyIndices(parentLevel)).Value
                 Next parentLevel
                 
-                ' Write the SUBTOTAL formulas (with corrected logic)
+                ' Write the SUBTOTAL formulas
                 For sc = 1 To UBound(subtotalIndices)
                     colLetter = Split(ws.Cells(1, subtotalIndices(sc)).Address, "$")(1)
                     If summaryBelow Then
-                        ' When inserting below, the original range does not shift
                         formulaRange = colLetter & formulaStartRow & ":" & colLetter & formulaEndRow
                     Else
-                        ' When inserting above, the original range shifts down by 1
                         formulaRange = colLetter & formulaStartRow + 1 & ":" & colLetter & formulaEndRow + 1
                     End If
                     ws.Cells(insertAt, subtotalIndices(sc)).Formula = "=SUBTOTAL(9," & formulaRange & ")"
@@ -198,8 +197,8 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
                 ' Update the groupStartRow for the next group
                 groupStartRow = r - 1
             End If
-        Next level
-    Next r
+        Next r
+    Next level
 
     ' --- Insert Grand Total ---
     lastDataRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
@@ -220,6 +219,7 @@ Private Sub CreateManualSubtotals(ws As Worksheet, ByVal headerRowNum As Long, h
         End If
     Next sc
 End Sub
+
 
 Private Sub RestoreExcelSettings(ByVal cancelled As Boolean)
     Application.EnableEvents = True
