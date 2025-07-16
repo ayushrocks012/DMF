@@ -1,0 +1,158 @@
+'====================================================================================
+'== CODE FOR THE USERFORM: frmMultiSubtotal
+'== This code does not need to be changed.
+'====================================================================================
+
+Option Explicit
+
+' --- Form Control Event Handlers ---
+
+Private Sub btnAddHierarchy_Click()
+    Call MoveSelectedItems(lstAvailableCols, lstHierarchyOrder, True)
+End Sub
+
+Private Sub btnRemoveHierarchy_Click()
+    Dim i As Long
+    For i = lstHierarchyOrder.ListCount - 1 To 0 Step -1
+        If lstHierarchyOrder.Selected(i) Then
+            lstAvailableCols.AddItem lstHierarchyOrder.List(i)
+            lstHierarchyOrder.RemoveItem i
+        End If
+    Next i
+End Sub
+
+Private Sub btnAddSubtotal_Click()
+    Call MoveSelectedItems(lstAvailableCols, lstSubtotalCols, True)
+End Sub
+
+Private Sub btnRemoveSubtotal_Click()
+    Dim i As Long
+    For i = lstSubtotalCols.ListCount - 1 To 0 Step -1
+        If lstSubtotalCols.Selected(i) Then
+            lstAvailableCols.AddItem lstSubtotalCols.List(i)
+            lstSubtotalCols.RemoveItem i
+        End If
+    Next i
+End Sub
+
+Private Sub btnAddAllSubtotals_Click()
+    If lstAvailableCols.ListCount = 0 Then Exit Sub
+    Dim i As Long, j As Long, itemExists As Boolean
+    For i = 0 To lstAvailableCols.ListCount - 1
+        itemExists = False
+        For j = 0 To lstSubtotalCols.ListCount - 1
+            If lstSubtotalCols.List(j) = lstAvailableCols.List(i) Then
+                itemExists = True
+                Exit For
+            End If
+        Next j
+        If Not itemExists Then lstSubtotalCols.AddItem lstAvailableCols.List(i)
+    Next i
+    lstAvailableCols.Clear
+End Sub
+
+Private Sub btnCancel_Click()
+    Unload Me
+End Sub
+
+Private Sub btnDown_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, 1)
+End Sub
+
+Private Sub btnUp_Click()
+    Call MoveListItemUpDown(lstHierarchyOrder, -1)
+End Sub
+
+Private Sub btnOK_Click()
+    If Me.cboWorksheets.ListIndex = -1 Then MsgBox "Please select a worksheet.", vbExclamation: Exit Sub
+    If lstHierarchyOrder.ListCount = 0 Then MsgBox "Please select at least one hierarchy column.", vbExclamation: Exit Sub
+    If lstSubtotalCols.ListCount = 0 Then MsgBox "Please select at least one subtotal column.", vbExclamation: Exit Sub
+    
+    ' --- Pass settings to global variables ---
+    targetWorksheetName = Me.cboWorksheets.Value
+    Set hierarchyColNames = New Collection
+    Dim i As Long
+    For i = 0 To lstHierarchyOrder.ListCount - 1: hierarchyColNames.Add lstHierarchyOrder.List(i): Next
+    Set subtotalColNames = New Collection
+    For i = 0 To lstSubtotalCols.ListCount - 1: subtotalColNames.Add lstSubtotalCols.List(i): Next
+    summaryBelow = Me.optSummaryBelow.Value
+    skipSort = Me.chkSkipSort.Value
+    
+    Me.Hide
+    ' --- CALL THE IN-PLACE ENGINE ---
+    Call RunInPlaceSubtotal
+    Unload Me
+End Sub
+
+Private Sub UserForm_Initialize()
+    Me.optSummaryBelow.Value = True
+    Me.chkSkipSort.Value = False
+    Me.lstAvailableCols.RowSource = ""
+    Me.lstHierarchyOrder.RowSource = ""
+    Me.lstSubtotalCols.RowSource = ""
+    Dim ws As Worksheet
+    Me.cboWorksheets.Clear
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.Visible = xlSheetVisible Then Me.cboWorksheets.AddItem ws.Name
+    Next ws
+    On Error Resume Next
+    Me.cboWorksheets.Value = ActiveSheet.Name
+    If Err.Number <> 0 And Me.cboWorksheets.ListCount > 0 Then Me.cboWorksheets.ListIndex = 0
+    On Error GoTo 0
+End Sub
+
+Private Sub cboWorksheets_Change()
+    Call PopulateAvailableColumns
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If CloseMode = vbFormControlMenu Then Call CancelAndCleanup
+End Sub
+
+' --- Helper Subroutines ---
+
+Private Sub PopulateAvailableColumns()
+    Me.lstAvailableCols.Clear
+    Me.lstHierarchyOrder.Clear
+    Me.lstSubtotalCols.Clear
+    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
+    Dim ws As Worksheet, lastCol As Long, i As Long, headerText As String
+    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    If lastCol = 0 Then Exit Sub
+    For i = 1 To lastCol
+        headerText = Trim(ws.Cells(headerRow, i).Text)
+        If headerText <> "" Then Me.lstAvailableCols.AddItem headerText
+    Next i
+End Sub
+
+Private Sub MoveSelectedItems(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
+    Dim i As Long, j As Long, itemExists As Boolean
+    For i = sourceList.ListCount - 1 To 0 Step -1
+        If sourceList.Selected(i) Then
+            itemExists = False
+            If preventDuplicates Then
+                For j = 0 To destList.ListCount - 1
+                    If destList.List(j) = sourceList.List(i) Then itemExists = True: Exit For
+                Next j
+            End If
+            If Not itemExists Then
+                destList.AddItem sourceList.List(i)
+                sourceList.RemoveItem i
+            Else
+                MsgBox "'" & sourceList.List(i) & "' is already in the destination list.", vbInformation
+            End If
+        End If
+    Next i
+End Sub
+
+Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
+    Dim selectedIdx As Long: selectedIdx = lb.ListIndex
+    If selectedIdx = -1 Then Exit Sub
+    If direction = -1 And selectedIdx = 0 Then Exit Sub
+    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub
+    Dim temp As String: temp = lb.List(selectedIdx)
+    lb.List(selectedIdx) = lb.List(selectedIdx + direction)
+    lb.List(selectedIdx + direction) = temp
+    lb.Selected(selectedIdx + direction) = True
+End Sub
