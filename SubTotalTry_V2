@@ -1,6 +1,7 @@
 '====================================================================================
 '== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This code does not need to be changed.
+'== Right-click your UserForm in the VBE Project Explorer and select "View Code".
+'== Paste this entire section into that code window.
 '====================================================================================
 
 Option Explicit
@@ -79,7 +80,7 @@ Private Sub btnOK_Click()
     skipSort = Me.chkSkipSort.Value
     
     Me.Hide
-    ' --- CALL THE NEW IN-PLACE ENGINE ---
+    ' --- CALL THE IN-PLACE ENGINE ---
     Call RunInPlaceSubtotal
     Unload Me
 End Sub
@@ -159,7 +160,7 @@ End Sub
 
 '====================================================================================
 '== CODE FOR A NEW MODULE
-'== This is the new "In-Place" engine.
+'== This is the "In-Place" engine that modifies the current sheet.
 '====================================================================================
 
 Option Explicit
@@ -288,7 +289,7 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' --- FIX: Apply subtotals in a loop, from highest level to lowest, for robustness ---
+    ' Applies the standard Excel subtotal command in a loop for robustness.
     
     ' Apply the highest level of the hierarchy first. This creates the main structure and the Grand Total.
     dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
@@ -313,7 +314,6 @@ Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long,
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
-    ' --- NEW ROBUST LOGIC ---
     ' Loops through the generated report to populate parent hierarchy values on total rows.
     Dim lastRow As Long, r As Long, level As Long
     Dim totalLevel As Long
