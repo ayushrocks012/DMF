@@ -1,163 +1,4 @@
 '====================================================================================
-'== CODE FOR THE USERFORM: frmMultiSubtotal
-'== This code does not need to be changed.
-'====================================================================================
-
-Option Explicit
-
-' --- Form Control Event Handlers ---
-
-Private Sub btnAddHierarchy_Click()
-    Call MoveSelectedItems(lstAvailableCols, lstHierarchyOrder, True)
-End Sub
-
-Private Sub btnRemoveHierarchy_Click()
-    Dim i As Long
-    For i = lstHierarchyOrder.ListCount - 1 To 0 Step -1
-        If lstHierarchyOrder.Selected(i) Then
-            lstAvailableCols.AddItem lstHierarchyOrder.List(i)
-            lstHierarchyOrder.RemoveItem i
-        End If
-    Next i
-End Sub
-
-Private Sub btnAddSubtotal_Click()
-    Call MoveSelectedItems(lstAvailableCols, lstSubtotalCols, True)
-End Sub
-
-Private Sub btnRemoveSubtotal_Click()
-    Dim i As Long
-    For i = lstSubtotalCols.ListCount - 1 To 0 Step -1
-        If lstSubtotalCols.Selected(i) Then
-            lstAvailableCols.AddItem lstSubtotalCols.List(i)
-            lstSubtotalCols.RemoveItem i
-        End If
-    Next i
-End Sub
-
-Private Sub btnAddAllSubtotals_Click()
-    If lstAvailableCols.ListCount = 0 Then Exit Sub
-    Dim i As Long, j As Long, itemExists As Boolean
-    For i = 0 To lstAvailableCols.ListCount - 1
-        itemExists = False
-        For j = 0 To lstSubtotalCols.ListCount - 1
-            If lstSubtotalCols.List(j) = lstAvailableCols.List(i) Then
-                itemExists = True
-                Exit For
-            End If
-        Next j
-        If Not itemExists Then lstSubtotalCols.AddItem lstAvailableCols.List(i)
-    Next i
-    lstAvailableCols.Clear
-End Sub
-
-Private Sub btnCancel_Click()
-    Unload Me
-End Sub
-
-Private Sub btnDown_Click()
-    Call MoveListItemUpDown(lstHierarchyOrder, 1)
-End Sub
-
-Private Sub btnUp_Click()
-    Call MoveListItemUpDown(lstHierarchyOrder, -1)
-End Sub
-
-Private Sub btnOK_Click()
-    If Me.cboWorksheets.ListIndex = -1 Then MsgBox "Please select a worksheet.", vbExclamation: Exit Sub
-    If lstHierarchyOrder.ListCount = 0 Then MsgBox "Please select at least one hierarchy column.", vbExclamation: Exit Sub
-    If lstSubtotalCols.ListCount = 0 Then MsgBox "Please select at least one subtotal column.", vbExclamation: Exit Sub
-    
-    ' --- Pass settings to global variables ---
-    targetWorksheetName = Me.cboWorksheets.Value
-    Set hierarchyColNames = New Collection
-    Dim i As Long
-    For i = 0 To lstHierarchyOrder.ListCount - 1: hierarchyColNames.Add lstHierarchyOrder.List(i): Next
-    Set subtotalColNames = New Collection
-    For i = 0 To lstSubtotalCols.ListCount - 1: subtotalColNames.Add lstSubtotalCols.List(i): Next
-    summaryBelow = Me.optSummaryBelow.Value
-    skipSort = Me.chkSkipSort.Value
-    
-    Me.Hide
-    ' --- CALL THE IN-PLACE ENGINE ---
-    Call RunInPlaceSubtotal
-    Unload Me
-End Sub
-
-Private Sub UserForm_Initialize()
-    Me.optSummaryBelow.Value = True
-    Me.chkSkipSort.Value = False
-    Me.lstAvailableCols.RowSource = ""
-    Me.lstHierarchyOrder.RowSource = ""
-    Me.lstSubtotalCols.RowSource = ""
-    Dim ws As Worksheet
-    Me.cboWorksheets.Clear
-    For Each ws In ThisWorkbook.Worksheets
-        If ws.Visible = xlSheetVisible Then Me.cboWorksheets.AddItem ws.Name
-    Next ws
-    On Error Resume Next
-    Me.cboWorksheets.Value = ActiveSheet.Name
-    If Err.Number <> 0 And Me.cboWorksheets.ListCount > 0 Then Me.cboWorksheets.ListIndex = 0
-    On Error GoTo 0
-End Sub
-
-Private Sub cboWorksheets_Change()
-    Call PopulateAvailableColumns
-End Sub
-
-Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
-    If CloseMode = vbFormControlMenu Then Call CancelAndCleanup
-End Sub
-
-' --- Helper Subroutines ---
-
-Private Sub PopulateAvailableColumns()
-    Me.lstAvailableCols.Clear
-    Me.lstHierarchyOrder.Clear
-    Me.lstSubtotalCols.Clear
-    If Me.cboWorksheets.ListIndex = -1 Then Exit Sub
-    Dim ws As Worksheet, lastCol As Long, i As Long, headerText As String
-    Set ws = ThisWorkbook.Worksheets(Me.cboWorksheets.Value)
-    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
-    If lastCol = 0 Then Exit Sub
-    For i = 1 To lastCol
-        headerText = Trim(ws.Cells(headerRow, i).Text)
-        If headerText <> "" Then Me.lstAvailableCols.AddItem headerText
-    Next i
-End Sub
-
-Private Sub MoveSelectedItems(sourceList As MSForms.ListBox, destList As MSForms.ListBox, preventDuplicates As Boolean)
-    Dim i As Long, j As Long, itemExists As Boolean
-    For i = sourceList.ListCount - 1 To 0 Step -1
-        If sourceList.Selected(i) Then
-            itemExists = False
-            If preventDuplicates Then
-                For j = 0 To destList.ListCount - 1
-                    If destList.List(j) = sourceList.List(i) Then itemExists = True: Exit For
-                Next j
-            End If
-            If Not itemExists Then
-                destList.AddItem sourceList.List(i)
-                sourceList.RemoveItem i
-            Else
-                MsgBox "'" & sourceList.List(i) & "' is already in the destination list.", vbInformation
-            End If
-        End If
-    Next i
-End Sub
-
-Private Sub MoveListItemUpDown(lb As MSForms.ListBox, direction As Integer)
-    Dim selectedIdx As Long: selectedIdx = lb.ListIndex
-    If selectedIdx = -1 Then Exit Sub
-    If direction = -1 And selectedIdx = 0 Then Exit Sub
-    If direction = 1 And selectedIdx = lb.ListCount - 1 Then Exit Sub
-    Dim temp As String: temp = lb.List(selectedIdx)
-    lb.List(selectedIdx) = lb.List(selectedIdx + direction)
-    lb.List(selectedIdx + direction) = temp
-    lb.Selected(selectedIdx + direction) = True
-End Sub
-
-'====================================================================================
 '== CODE FOR A NEW MODULE
 '== This is the new "In-Place" engine.
 '====================================================================================
@@ -307,20 +148,20 @@ Private Sub SortDataInPlace(ws As Worksheet, dataRange As Range, hierarchyIndice
 End Sub
 
 Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long, subtotalIndices() As Long)
-    ' --- FIX: Apply subtotals from most detailed to least detailed for consistent layout. ---
+    ' --- FIX: Apply subtotals from highest level to lowest for correct Grand Total placement. ---
     
-    ' Apply the most detailed level first, this replaces any existing subtotals.
-    dataRange.Subtotal GroupBy:=hierarchyIndices(UBound(hierarchyIndices)), _
+    ' Apply the highest level of the hierarchy first. This creates the main structure and the Grand Total.
+    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
                        Function:=xlSum, _
                        TotalList:=subtotalIndices, _
                        Replace:=True, _
                        PageBreaks:=False, _
                        SummaryBelowData:=summaryBelow
                        
-    ' Now, loop backwards through the remaining hierarchy levels to add nested totals.
+    ' Now, loop through the remaining hierarchy levels to add the nested subtotals.
     If UBound(hierarchyIndices) > 1 Then
         Dim i As Long
-        For i = UBound(hierarchyIndices) - 1 To 1 Step -1
+        For i = 2 To UBound(hierarchyIndices)
             dataRange.Subtotal GroupBy:=hierarchyIndices(i), _
                                Function:=xlSum, _
                                TotalList:=subtotalIndices, _
@@ -329,30 +170,23 @@ Private Sub ApplyNativeSubtotals(dataRange As Range, hierarchyIndices() As Long,
                                SummaryBelowData:=summaryBelow
         Next i
     End If
-    
-    ' Finally, add the Grand Total by subtotaling on the highest-level group again.
-    ' This is a trick to ensure the Grand Total appears correctly with the other totals.
-    dataRange.Subtotal GroupBy:=hierarchyIndices(1), _
-                       Function:=xlSum, _
-                       TotalList:=subtotalIndices, _
-                       Replace:=False, _
-                       PageBreaks:=False, _
-                       SummaryBelowData:=summaryBelow
 End Sub
 
 Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyIndices() As Long)
     ' --- NEW ROBUST LOGIC ---
     ' Loops through the generated report to populate parent hierarchy values on total rows.
     Dim lastRow As Long, r As Long, level As Long
-    Dim totalLevel As Long, sourceRow As Long
+    Dim totalLevel As Long, sourceRow As Long, totalLabel As String
     
     lastRow = ws.Cells(ws.Rows.Count, hierarchyIndices(1)).End(xlUp).Row
     
-    ' Loop from the bottom up
+    ' Loop from the bottom up to fix labels
     For r = lastRow To dataRange.Row + 1 Step -1
         totalLevel = 0
+        
         ' Check if this row is a total row by finding which hierarchy column has a " Total" label
-        For level = 1 To UBound(hierarchyIndices)
+        ' We must scan from most detailed to least detailed to correctly identify the level
+        For level = UBound(hierarchyIndices) To 1 Step -1
             If InStr(1, CStr(ws.Cells(r, hierarchyIndices(level)).Value), " Total", vbTextCompare) > 0 Then
                 totalLevel = level
                 Exit For
@@ -361,6 +195,13 @@ Private Sub PostProcessSubtotals(ws As Worksheet, dataRange As Range, hierarchyI
         
         ' If it's a total row (and not the Grand Total)
         If totalLevel > 0 And Not InStr(1, CStr(ws.Cells(r, hierarchyIndices(1)).Value), "Grand Total", vbTextCompare) > 0 Then
+            
+            ' Store the correct label and clear out all hierarchy columns for this row
+            totalLabel = ws.Cells(r, hierarchyIndices(totalLevel)).Value
+            ws.Range(ws.Cells(r, hierarchyIndices(1)), ws.Cells(r, hierarchyIndices(UBound(hierarchyIndices)))).ClearContents
+            
+            ' Write the correct label back into its proper column
+            ws.Cells(r, hierarchyIndices(totalLevel)).Value = totalLabel
             
             ' Determine the source row for parent values based on subtotal position
             If summaryBelow Then
@@ -391,9 +232,9 @@ Private Sub RestoreExcelSettings(ByVal cancelled As Boolean)
 End Sub
 
 Private Function GetColumnIndexByText(colName As String, ws As Worksheet, ByVal headerRowNum As Long) As Long
-    Dim lastCol As Long: lastCol = ws.Cells(headerRowNum, ws.Columns.Count).End(xlToLeft).Column
+    Dim lastCol As Long: lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
     Dim i As Long
     For i = 1 To lastCol
-        If Trim(ws.Cells(headerRowNum, i).Text) = colName Then GetColumnIndexByText = i: Exit Function
+        If Trim(ws.Cells(headerRow, i).Text) = colName Then GetColumnIndexByText = i: Exit Function
     Next i
 End Function
