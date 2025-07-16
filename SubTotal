@@ -2,7 +2,7 @@
 '====================================================================================
 '==
 '==  PROJECT:    Multi-Level Subtotal Tool
-'==  VERSION:    4.1 (Refactored & Fixed)
+'==  VERSION:    4.2 (Logic Fix)
 '==  DATE:       July 16, 2025
 '==  AUTHOR:     Gemini
 '==
@@ -466,12 +466,27 @@ Private Sub CreateLevelSubtotals(ws As Worksheet, ByVal headerRowNum As Long, hi
         ' Loop backwards through the rows for the current level
         For r = lastDataRow To headerRowNum + 1 Step -1
             
-            ' A group break occurs if the value in the current level's column changes,
-            ' or if we've hit the first row of data.
-            Dim isGroupBreak As Boolean
-            isGroupBreak = (CStr(ws.Cells(r, hierarchyIndices(level)).Value) <> CStr(ws.Cells(r - 1, hierarchyIndices(level)).Value))
+            ' A group break must be triggered if the value changes OR if the row above is already a subtotal row.
+            ' This prevents lower-level totals from breaking the logic for higher-level totals.
+            Dim triggerBreak As Boolean: triggerBreak = False
             
-            If isGroupBreak Or r = headerRowNum + 1 Then
+            If r = headerRowNum + 1 Then
+                triggerBreak = True ' Always trigger a break at the very first data row
+            Else
+                ' Check if the row above is a subtotal row (from a lower-level pass)
+                Dim isRowAboveSubtotal As Boolean
+                isRowAboveSubtotal = InStr(1, ws.Cells(r - 1, subtotalIndices(1)).Formula, "SUBTOTAL") > 0
+                
+                ' Check for a value change in the current hierarchy level's column
+                Dim isValueChange As Boolean
+                isValueChange = (CStr(ws.Cells(r, hierarchyIndices(level)).Value) <> CStr(ws.Cells(r - 1, hierarchyIndices(level)).Value))
+                
+                If isValueChange Or isRowAboveSubtotal Then
+                    triggerBreak = True
+                End If
+            End If
+
+            If triggerBreak Then
                 
                 ' --- 1. DEFINE RANGES ---
                 formulaStartRow = r
@@ -608,3 +623,4 @@ Private Sub RestoreApplicationSettings(ByVal wasCancelled As Boolean)
     Set hierarchyColNames = Nothing
     Set subtotalColNames = Nothing
 End Sub
+```</immersive>
